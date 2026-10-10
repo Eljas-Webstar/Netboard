@@ -45,3 +45,10 @@ Sichtschutz im Browser: Benutzername und Passwort werden als SHA-256 von `benutz
 - Event: "Wen suchen wir?" (Typen) ist gleichzeitig Rollen am Tisch (`e.rollen = e.typen`). Branchen stecken in Stichworten.
 - Einladung: zwei Vorlagen, `e.einladungstext` (lang, E-Mail) und `e.kurztext` (Direktnachricht). Umschalter `S.textArt`.
 - Runde: "Liste fuer die Einladerin" (`einladerListe`) als PDF (Druckfenster) oder CSV (Semikolon, BOM, fuer Excel).
+
+## Schwerpunkt Gesundheit und Pflege (10.10.2026)
+- Zweiter Schwerpunkt neben Entscheidern: Betriebe mit taeglichem Kontakt zu Senioren und Menschen mit Pflegegrad (Reha-Sport, Sanitaetshaus, Hausnotruf, Seniorenwohnen, Wohnungsgenossenschaften, Heilberufe). Eigenes Thema "Gesundheit und Pflege", Regeln und Suchmuster im Skill `netboard`.
+- Typ-Vorschlaege: Schluessel `gesund` in `TYP_VORSCHLAEGE`, nur Berufsbezeichnungen.
+- Heilberufe: Feld `heilberuf` (Import in `uebernehmen`), Hinweis ueber `heilHinweis()` an Karte und Profil. Text neutral lassen, Code ist oeffentlich.
+- Testlauf: `~/Downloads/netboard/recherche/gesundheit-und-pflege-2026-10-10.json`, 10 Personen, 7 Typen, alle erreichbar.
+- Social-Pruefung per Websuche lehnt Namenssuchen auf Profilseiten inzwischen oft ab. Profile dann von Hand pruefen lassen.

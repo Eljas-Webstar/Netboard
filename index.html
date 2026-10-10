@@ -650,6 +650,8 @@ function kwChip(p){
 }
 function kopierKnoepfe(box){ alle("[data-kopie-kw]",function(b){ b.onclick=function(ev_){ ev_.stopPropagation(); kopieren(b.dataset.kopieKw); }; },box); }
 
+/* Heilberufe: Hinweis an Karte und Profil, gesetzt über das Feld heilberuf aus der Recherche */
+function heilHinweis(p){ return p.heilberuf?'<p class="warnbox" style="margin:0"><b>Heilberuf:</b> Einladung nie mit Vermittlung von Patienten verbinden, vorher rechtlich klären.</p>':''; }
 function kandKarte(p,e,x){
   var tw=teilwerte(p,e), g=gesamt(tw);
   var knoepfe;
@@ -662,6 +664,7 @@ function kandKarte(p,e,x){
       '<small style="color:var(--ink-3)">'+esc([p.rolle?("Rolle: "+p.rolle):"",p.ort].filter(Boolean).join(" · "))+'</small></div>'+
       '<div class="gesamt">'+(g.wert===null?'–':g.wert)+'<small>Passung</small></div></div>'+
     '<div class="balken" style="height:6px;border-radius:3px;margin:0" title="Gesamtpassung, Einzelwerte im Profil"><i style="width:'+(g.wert||0)+'%"></i></div>'+
+    heilHinweis(p)+
     (p.begruendung?'<p class="warum"><b>Warum interessant:</b> '+esc(p.begruendung)+'</p>':'<p class="warum hint">Noch keine Begründung hinterlegt.</p>')+
     '<div class="tags" style="align-items:center">'+kwChip(p)+(p.gefundenUeber?'<span class="chip akz">über '+esc(p.gefundenUeber)+'</span>':'')+
       ((p.quellen||[]).length?'<span class="hint">'+plural(p.quellen.length,"Quelle","Quellen")+'</span>':'<span class="chip warn">Keine Quelle</span>')+'</div>'+
@@ -1267,6 +1270,7 @@ function profil(id,e){
       '<div style="flex:1;min-width:0"><b style="font-size:17px">'+esc(p.name)+'</b><div class="hint">'+esc([p.position,p.firma].filter(Boolean).join(" · ")||"Position unbekannt")+'</div></div>'+
       (e?'<div class="gesamt">'+(g.wert===null?'–':g.wert)+'<small>Gesamt</small></div>':'')+'</div>';
   if(p.beispiel) h+='<p class="infobox">Ausgedachte Beispielperson zum Ausprobieren. Keine echte Person.</p>';
+  h+=heilHinweis(p);
   var wk=wichtigkeit(p), kam=p.kamUeber?pers(p.kamUeber):null, emp=empfohlenVon(p);
   h+='<div class="tags" style="align-items:center">'+(wichtigChip(p)||'<span class="chip">Normal</span>')+'<span class="hint">'+esc(wk.hand?"von Hand gesetzt":"automatisch: "+wk.grund)+'</span></div>';
   h+='<div class="box" style="box-shadow:none;display:flex;flex-direction:column;gap:8px"><div class="sec-label" style="margin:0">Kontaktdaten</div>'+kontaktwegeHtml(p)+'</div>';
@@ -1343,6 +1347,7 @@ function profil(id,e){
    Beim Thema erscheinen passende Typen zum Antippen. Die Recherche sucht gezielt nach den gewählten. */
 var TYP_VORSCHLAEGE={
   "jagd":["Jagdpächter","Revierinhaber und Eigenjagdbesitzer","Forstbetriebe und Gutsbesitzer","Unternehmer mit Jagdleidenschaft","Jagdreise-Anbieter","Waffen- und Jagdhandel","Hersteller (Optik, Messer, Bekleidung)","Jagdverbände","Jagdschulen","Wildbret und Gastronomie","Messen und Veranstalter","Jagdpresse"],
+  "gesund":["Fitnessstudios mit Reha-Sport","Reha-Sport-Vereine und Seniorensport","Sanitätshäuser","Hörakustiker","Hausnotruf und Menüdienste","Betreutes Wohnen und Seniorenresidenzen","Tagespflege","Wohnungsgenossenschaften","Physio- und Ergotherapie","Ärzte und Apotheken","Ambulante Pflegedienste"],
   "pflege":["Pflegedienst-Inhaber","Pflegeheimbetreiber","Kranken- und Pflegekassen","Klinik- und Rehamanagement","Sanitätshäuser","Wohnungswirtschaft und Genossenschaften","Handwerk Badumbau","Health-Tech","Pflegeverbände","Seniorenwohnen"],
   "fussball":["Vereinsvorstände","Sportdirektoren","Sponsoren","Wirtschaftsräte der Vereine","Sportvermarktung","Fußballverbände","Spielerberater","Stadion- und Eventbetreiber","Sportmedien"],
   "hotel":["Hoteliers","Regionaldirektoren von Hotelketten","Gastronomie","Tourismusverbände","Eventlocations","Hotelimmobilien und Investoren"],
@@ -1582,6 +1587,7 @@ function uebernehmen(liste_,e,urls,herkunft){
     if(Array.isArray(r.quellen)) p.quellen=r.quellen.filter(function(q){ return q&&(q.text||q.url); }).map(function(q){ return {text:q.text||"",url:q.url||"",geprueft:q.url?pruef(q.url):undefined}; });
     var w=r.werte||{}; p.werte={ thema:zahl(w.thema), nutzen:zahl(w.nutzen), beruf:zahl(w.beruf), netzwerk:zahl(w.netzwerk), region:zahl(w.region) };
     if(r.nutzenGrund) p.nutzenGrund=String(r.nutzenGrund);
+    if(r.heilberuf!==undefined) p.heilberuf=r.heilberuf===true;
     if(!vorh){ D.personen.push(p); neu++; } else akt++;
     if(!einl(e.id,p.id)) zurEvent(e.id,p.id,"vorgeschlagen");
   });
