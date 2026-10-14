@@ -134,6 +134,13 @@ hr.sep{border:0;border-top:1px solid var(--line-soft);margin:4px 0;width:100%}
 .balken i{display:block;height:100%;background:var(--accent)}
 .warum{font-size:13.5px;color:var(--ink-2);margin:0}
 .warum b{color:var(--ink)}
+/* Clubs und Firmen */
+.firma-kopf{display:flex;gap:12px;align-items:flex-start}
+.firma-kopf .wer{flex:1;min-width:0}
+.firma-kopf b{font-size:16px;display:block}
+.firma-kopf small{display:block;color:var(--ink-2);font-size:13px}
+.ansprech{border-left:3px solid var(--accent);padding:2px 0 2px 10px;display:flex;flex-direction:column;gap:6px}
+.quellen-zeile{font-size:12.5px;color:var(--ink-3);overflow-wrap:anywhere}
 
 /* Runde */
 .zeile-gast{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;flex-wrap:wrap}
@@ -229,6 +236,7 @@ body.gesperrt header.kopf, body.gesperrt main, body.gesperrt .untenleiste{displa
   <section id="sicht-start"></section>
   <section id="sicht-event" hidden></section>
   <section id="sicht-personen" hidden></section>
+  <section id="sicht-clubs" hidden></section>
 </main>
 
 <nav class="untenleiste">
@@ -238,6 +246,9 @@ body.gesperrt header.kopf, body.gesperrt main, body.gesperrt .untenleiste{displa
   <button class="ul-haupt" id="neuBtn">+ Event</button>
   <button class="ul-knopf" data-sicht="personen" aria-label="Netzwerk">
     <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c2.6-.5 4.6 1 5 4.3"/></svg><span>Netzwerk</span>
+  </button>
+  <button class="ul-knopf" data-sicht="clubs" aria-label="Clubs">
+    <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.1-7 10-4-1.9-7-5.4-7-10V6z"/></svg><span>Clubs</span>
   </button>
 </nav>
 <div id="fenster"></div>
@@ -330,14 +341,14 @@ function herunterladen(name,inhalt,typ){
 /* ---------------- Datenspeicher ----------------
    Heute im Browser (localStorage), alles in einem Paket. Für mehrere Nutzer durch einen
    Supabase-Speicher mit denselben zwei Funktionen ersetzen, der Rest merkt davon nichts.
-   Tabellen später: events, personen, einladungen, verbindungen. */
+   Tabellen später: events, personen, einladungen, verbindungen, clubs, firmen. */
 var SCHLUESSEL="netboard_daten";
-function leer(){ return { events:[], personen:[], einladungen:[], verbindungen:[], gewichte:JSON.parse(JSON.stringify(GEWICHTE_STANDARD)) }; }
+function leer(){ return { events:[], personen:[], einladungen:[], verbindungen:[], clubs:[], firmen:[], gewichte:JSON.parse(JSON.stringify(GEWICHTE_STANDARD)) }; }
 var speicher={
   laden:function(){
     var d=null; try{ d=JSON.parse(LS.get(SCHLUESSEL)||"null"); }catch(e){}
     d=d||leer();
-    ["events","personen","einladungen","verbindungen"].forEach(function(k){ if(!Array.isArray(d[k])) d[k]=[]; });
+    ["events","personen","einladungen","verbindungen","clubs","firmen"].forEach(function(k){ if(!Array.isArray(d[k])) d[k]=[]; });
     if(!d.gewichte) d.gewichte=JSON.parse(JSON.stringify(GEWICHTE_STANDARD));
     if(d.gewichte.nutzen===undefined) d.gewichte.nutzen=GEWICHTE_STANDARD.nutzen;
     return d;
@@ -345,7 +356,7 @@ var speicher={
   sichern:function(d){ LS.set(SCHLUESSEL,JSON.stringify(d)); }
 };
 var D=speicher.laden();
-var S={ sicht:"start", eventId:null, tab:"kandidaten", filter:"vorschlaege", suche:"", letzteSicht:null };
+var S={ sicht:"start", eventId:null, clubId:null, tab:"kandidaten", filter:"vorschlaege", suche:"", letzteSicht:null };
 function sichern(){ speicher.sichern(D); zeichnen(); }
 
 /* ---------------- Zugriff ---------------- */
@@ -492,13 +503,17 @@ function alle(sel,f,box){ Array.prototype.forEach.call((box||document).querySele
 /* ---------------- Ansichten ---------------- */
 function zeichnen(){
   if(S.sicht==="event" && !ev(S.eventId)) S.sicht="start";
+  if(S.clubId && !club(S.clubId)) S.clubId=null;
   $("sicht-start").hidden = S.sicht!=="start";
   $("sicht-event").hidden = S.sicht!=="event";
   $("sicht-personen").hidden = S.sicht!=="personen";
+  $("sicht-clubs").hidden = S.sicht!=="clubs";
   alle(".ul-knopf",function(b){ b.setAttribute("aria-selected",String(b.dataset.sicht===S.sicht)); });
-  if(S.letzteSicht!==S.sicht+S.eventId){ S.letzteSicht=S.sicht+S.eventId; window.scrollTo(0,0); }
+  var schl=S.sicht+(S.sicht==="event"?S.eventId:(S.sicht==="clubs"?S.clubId:""));
+  if(S.letzteSicht!==schl){ S.letzteSicht=schl; window.scrollTo(0,0); }
   if(S.sicht==="start") zeichneStart();
   else if(S.sicht==="event") zeichneEvent();
+  else if(S.sicht==="clubs") zeichneClubs();
   else zeichnePersonen();
 }
 function eventOeffnen(id,tab){ S.sicht="event"; S.eventId=id; if(tab) S.tab=tab; fensterZu(); zeichnen(); }
@@ -651,9 +666,10 @@ function kwChip(p){
 function kopierKnoepfe(box){ alle("[data-kopie-kw]",function(b){ b.onclick=function(ev_){ ev_.stopPropagation(); kopieren(b.dataset.kopieKw); }; },box); }
 
 /* Heilberufe: Hinweis an Karte und Profil, gesetzt über das Feld heilberuf aus der Recherche */
+function amtsHinweis(p){ return p.amtstraeger?'<p class="warnbox" style="margin:0"><b>Amtsträger:</b> Einladung kann melde- oder genehmigungspflichtig sein, vorher klären.</p>':''; }
 function heilHinweis(p){ return p.heilberuf?'<p class="warnbox" style="margin:0"><b>Heilberuf:</b> Einladung nie mit Vermittlung von Patienten verbinden, vorher rechtlich klären.</p>':''; }
 function kandKarte(p,e,x){
-  var tw=teilwerte(p,e), g=gesamt(tw);
+  var tw=teilwerte(p,e), g=gesamt(tw), f=firmaFuer(p,e);
   var knoepfe;
   if(x.status==="vorgeschlagen") knoepfe='<button class="btn primary klein" data-wahl="'+esc(p.id)+'">Auswählen</button><button class="btn klein" data-prof="'+esc(p.id)+'">Profil</button><button class="btn ghost klein" data-weg="'+esc(p.id)+'">Nicht relevant</button>';
   else if(x.status==="aussortiert") knoepfe='<button class="btn klein" data-zurueck="'+esc(p.id)+'">Zurückholen</button><button class="btn klein" data-prof="'+esc(p.id)+'">Profil</button>';
@@ -664,7 +680,9 @@ function kandKarte(p,e,x){
       '<small style="color:var(--ink-3)">'+esc([p.rolle?("Rolle: "+p.rolle):"",p.ort].filter(Boolean).join(" · "))+'</small></div>'+
       '<div class="gesamt">'+(g.wert===null?'–':g.wert)+'<small>Passung</small></div></div>'+
     '<div class="balken" style="height:6px;border-radius:3px;margin:0" title="Gesamtpassung, Einzelwerte im Profil"><i style="width:'+(g.wert||0)+'%"></i></div>'+
-    heilHinweis(p)+
+    heilHinweis(p)+amtsHinweis(p)+
+    (f?'<p class="warum"><b>'+esc(f.verbindung||"Verbindung")+':</b> '+esc(f.name)+(f.verbindungText?', '+esc(f.verbindungText):'')+'</p>'+
+      (f.kooperationsidee?'<p class="warum"><b>Idee:</b> '+esc(f.kooperationsidee)+'</p>':''):'')+
     (p.begruendung?'<p class="warum"><b>Warum interessant:</b> '+esc(p.begruendung)+'</p>':'<p class="warum hint">Noch keine Begründung hinterlegt.</p>')+
     '<div class="tags" style="align-items:center">'+kwChip(p)+(p.gefundenUeber?'<span class="chip akz">über '+esc(p.gefundenUeber)+'</span>':'')+
       ((p.quellen||[]).length?'<span class="hint">'+plural(p.quellen.length,"Quelle","Quellen")+'</span>':'<span class="chip warn">Keine Quelle</span>')+'</div>'+
@@ -692,6 +710,7 @@ function tabKandidaten(e){
       '<button class="btn" id="personNeu">+ Person von Hand</button>'+
       '<button class="btn" id="importBtn">Datei importieren</button>'+
       '<button class="btn" id="ausNetzBtn">Aus dem Netzwerk</button></div>'+
+    (e.clubId&&club(e.clubId)?'<p class="infobox" style="margin:0 0 12px">Club: <b>'+esc(club(e.clubId).name)+'</b>. Die Ansprechpartner seiner Firmen stehen als Vorschläge hier. <a href="#" id="zumClub">Club ansehen</a></p>':'')+
     '<p class="hint erkl" style="margin:0 0 12px">Claude sucht im Netz nach passenden Personen. Thema, Beruf, Netzwerk und Region kommen aus der Suche, jeweils mit Quelle. „Passt zur Runde“ und „Zusagen“ rechnet die App selbst.</p>'+
     '<div class="modus" id="filter" style="margin-bottom:12px">'+
       '<button data-f="vorschlaege">Vorschläge '+grp.vorschlaege.length+'</button>'+
@@ -708,6 +727,7 @@ function tabKandidaten(e){
   kopierKnoepfe(box);
   alle("#filter button",function(b){ b.setAttribute("aria-pressed",String(b.dataset.f===S.filter)); b.onclick=function(){ S.filter=b.dataset.f; zeichneEvent(); }; },box);
   $("importBtn").onclick=function(){ importFenster(e); };
+  if($("zumClub")) $("zumClub").onclick=function(ev_){ ev_.preventDefault(); clubOeffnen(e.clubId); };
   $("sucheBtn").onclick=function(){ sucheFenster(e); };
   $("personNeu").onclick=function(){ personFormular(null,e); };
   $("ausNetzBtn").onclick=function(){ ausNetzwerk(e); };
@@ -1270,7 +1290,13 @@ function profil(id,e){
       '<div style="flex:1;min-width:0"><b style="font-size:17px">'+esc(p.name)+'</b><div class="hint">'+esc([p.position,p.firma].filter(Boolean).join(" · ")||"Position unbekannt")+'</div></div>'+
       (e?'<div class="gesamt">'+(g.wert===null?'–':g.wert)+'<small>Gesamt</small></div>':'')+'</div>';
   if(p.beispiel) h+='<p class="infobox">Ausgedachte Beispielperson zum Ausprobieren. Keine echte Person.</p>';
-  h+=heilHinweis(p);
+  h+=heilHinweis(p)+amtsHinweis(p);
+  var pf=firmenVonPerson(p);
+  if(pf.length) h+='<div class="box" style="box-shadow:none;display:flex;flex-direction:column;gap:8px"><div class="sec-label" style="margin:0">Ansprechpartner für</div>'+pf.map(function(f){
+    var c=club(f.clubId);
+    return '<div><b>'+esc(f.name)+'</b>'+(c?' <a href="#" data-zuclub="'+esc(c.id)+'">'+esc(c.name)+'</a>':'')+'<div class="hint">'+esc([f.verbindung,f.verbindungText].filter(Boolean).join(", "))+'</div>'+
+      (f.kooperationsidee?'<p class="warum" style="margin-top:4px"><b>Idee:</b> '+esc(f.kooperationsidee)+'</p>':'')+'</div>';
+  }).join("")+'</div>';
   var wk=wichtigkeit(p), kam=p.kamUeber?pers(p.kamUeber):null, emp=empfohlenVon(p);
   h+='<div class="tags" style="align-items:center">'+(wichtigChip(p)||'<span class="chip">Normal</span>')+'<span class="hint">'+esc(wk.hand?"von Hand gesetzt":"automatisch: "+wk.grund)+'</span></div>';
   h+='<div class="box" style="box-shadow:none;display:flex;flex-direction:column;gap:8px"><div class="sec-label" style="margin:0">Kontaktdaten</div>'+kontaktwegeHtml(p)+'</div>';
@@ -1332,6 +1358,7 @@ function profil(id,e){
   kopierKnoepfe(document.querySelector(".panel-body"));
   $("pKontakt").onclick=function(){ kontaktEintragen(p,function(){ profil(id,e); }); };
   alle("[data-zu]",function(a){ a.onclick=function(ev_){ ev_.preventDefault(); profil(a.dataset.zu,e); }; });
+  alle("[data-zuclub]",function(a){ a.onclick=function(ev_){ ev_.preventDefault(); clubOeffnen(a.dataset.zuclub); }; });
   if($("pWahl")) $("pWahl").onclick=function(){ statusSetzen(x,"ausgewaehlt"); speicher.sichern(D); zeichnen(); profil(id,e); toast("Ausgewählt."); };
   if($("pText")) $("pText").onclick=function zeigeText(){
     var kurz=S.textArt==="kurz";
@@ -1378,14 +1405,17 @@ function chipWahl(boxId,optionen,gewaehlt,eigene){
 }
 
 /* ---------------- Formulare ---------------- */
-function eventFormular(alt){
-  var e=alt||{ datum:ymd(new Date(Date.now()+5*86400000)), plaetze:14, quote:10, ort:"", region:"NRW, Schwerpunkt Ruhrgebiet", ziel:"allgemeines Networking", rollen:[], einladungstext:TEXT_STANDARD };
+function eventFormular(alt,vorgabe){
+  var e=alt||Object.assign({ datum:ymd(new Date(Date.now()+5*86400000)), plaetze:14, quote:10, ort:"", region:"NRW, Schwerpunkt Ruhrgebiet", ziel:"allgemeines Networking", rollen:[], einladungstext:TEXT_STANDARD },vorgabe||{});
   fenster(alt?"Event bearbeiten":"Neues Event",
     '<div class="schritte"><span id="sk1">1 Das Wichtigste</span><span id="sk2">2 Details</span></div>'+
     '<div id="s1" style="display:flex;flex-direction:column;gap:12px">'+
       '<div class="field"><label for="f_name">Eventname</label><input id="f_name" value="'+esc(e.name||"")+'" placeholder="Netzwerkabend Immobilien" autocomplete="off"></div>'+
       '<div class="two"><div class="field"><label for="f_spiel">Anlass</label><input id="f_spiel" value="'+esc(e.spiel||"")+'" placeholder="Abendessen, Golfturnier, Sportevent" autocomplete="off"></div>'+
-        '<div class="field"><label for="f_ort">Ort</label><input id="f_ort" value="'+esc(e.ort||"")+'" placeholder="Restaurant, Hotel, Loge"></div></div>'+
+        '<div class="field"><label for="f_ort">Ort</label><input id="f_ort" value="'+esc(e.ort||"")+'" placeholder="Restaurant, Hotel, Saal"></div></div>'+
+      (D.clubs.length?'<div class="field"><label for="f_club">Club</label><select id="f_club"><option value="">keiner</option>'+
+        D.clubs.map(function(c){ return '<option value="'+esc(c.id)+'"'+(e.clubId===c.id?' selected':'')+'>'+esc(c.name)+'</option>'; }).join("")+'</select>'+
+        '<span class="hint erkl">Die Ansprechpartner der Firmen dieses Clubs erscheinen als Vorschläge.</span></div>':'')+
       '<div class="two"><div class="field"><label for="f_datum">Datum</label><input id="f_datum" type="date" class="mono" value="'+esc(e.datum||"")+'"></div>'+
         '<div class="field"><label for="f_zeit">Uhrzeit</label><input id="f_zeit" type="time" class="mono" value="'+esc(e.uhrzeit||"")+'"></div></div>'+
       '<div class="field"><label for="f_thema">Thema</label><input id="f_thema" value="'+esc(e.thema||"")+'" placeholder="z. B. Immobilien" autocomplete="off"></div>'+
@@ -1449,7 +1479,9 @@ function eventFormular(alt){
     neu.einladungstext=$("f_text").value.trim()||TEXT_STANDARD; neu.kurztext=$("f_kurz").value.trim()||TEXT_KURZ;
     neu.typen=typen.slice(); neu.rollen=typen.slice(); neu.positionen=positionen.slice(); neu.ohne=ohne.slice();
     neu.stichworte=liste($("f_stich").value); neu.mindestMA=$("f_ma").value;
+    if($("f_club")) neu.clubId=$("f_club").value||undefined;
     if(!alt) D.events.push(neu);
+    clubVorschlaege(neu);
     speicher.sichern(D); fensterZu(); eventOeffnen(neu.id,"kandidaten"); toast(alt?"Gespeichert.":"Event angelegt.");
   };
   if($("loeschBtn")) $("loeschBtn").onclick=function(){
@@ -1561,6 +1593,13 @@ function importFenster(e){
   };
   $("iLos").onclick=function(){
     var roh; try{ roh=JSON.parse($("i_text").value); }catch(err){ var f=$("i_err"); f.hidden=false; f.textContent="Das ist keine gültige Recherche-Datei. Bitte die Datei unverändert einfügen."; return; }
+    if(roh && Array.isArray(roh.firmen)){
+      var rc=clubUebernehmen(roh);
+      if(!rc){ var f2=$("i_err"); f2.hidden=false; f2.textContent="In der Club-Datei fehlt der Name des Clubs."; return; }
+      if(!e.clubId){ e.clubId=rc.club.id; clubVorschlaege(e); speicher.sichern(D); }
+      S.filter="vorschlaege"; fensterZu(); zeichnen();
+      toast(rc.club.name+": "+rc.neu+" Firmen neu, "+rc.akt+" aktualisiert."); return;
+    }
     var r=uebernehmen(Array.isArray(roh)?roh:(roh.personen||[]),e,null,"Datei "+(e.thema||""));
     S.filter="vorschlaege"; fensterZu(); zeichnen();
     toast(r.neu+" neu, "+r.akt+" aktualisiert.");
@@ -1573,11 +1612,8 @@ function normUrl(u){
   try{ var x=new URL(u); return (x.hostname.replace(/^(www|[a-z]{2})\./,"")+x.pathname.replace(/\/+$/,"")).toLowerCase(); }
   catch(err){ return String(u||"").toLowerCase(); }
 }
-function uebernehmen(liste_,e,urls,herkunft){
-  var neu=0, akt=0;
+function personUebernehmen(r,urls,herkunft){
   function pruef(u){ return urls ? urls.has(normUrl(u)) : undefined; }
-  liste_.forEach(function(r){
-    if(!r||!r.name) return;
     var vorh=D.personen.filter(function(p){ return norm(p.name)===norm(r.name) && norm(p.firma)===norm(r.firma); })[0];
     var p=vorh||{ id:uid(), angelegt:new Date().toISOString(), herkunft:herkunft };
     ["name","position","firma","branche","ort","website","rolle","begruendung","einladungsgrund","gefundenUeber"].forEach(function(k){ if(r[k]!==undefined&&r[k]!==null&&r[k]!=="") p[k]=String(r[k]); });
@@ -1588,8 +1624,17 @@ function uebernehmen(liste_,e,urls,herkunft){
     var w=r.werte||{}; p.werte={ thema:zahl(w.thema), nutzen:zahl(w.nutzen), beruf:zahl(w.beruf), netzwerk:zahl(w.netzwerk), region:zahl(w.region) };
     if(r.nutzenGrund) p.nutzenGrund=String(r.nutzenGrund);
     if(r.heilberuf!==undefined) p.heilberuf=r.heilberuf===true;
-    if(!vorh){ D.personen.push(p); neu++; } else akt++;
-    if(!einl(e.id,p.id)) zurEvent(e.id,p.id,"vorgeschlagen");
+    if(r.amtstraeger!==undefined) p.amtstraeger=r.amtstraeger===true;
+    if(!vorh) D.personen.push(p);
+  return { p:p, neu:!vorh };
+}
+function uebernehmen(liste_,e,urls,herkunft){
+  var neu=0, akt=0;
+  liste_.forEach(function(r){
+    if(!r||!r.name) return;
+    var x=personUebernehmen(r,urls,herkunft);
+    if(x.neu) neu++; else akt++;
+    if(!einl(e.id,x.p.id)) zurEvent(e.id,x.p.id,"vorgeschlagen");
   });
   speicher.sichern(D);
   return { neu:neu, akt:akt };
@@ -1624,6 +1669,221 @@ function sucheFenster(e){
     $("a_kopie").onclick=function(){ kopieren(auftragBefehl(e,$("a_anz").value)); };
 }
 
+/* ---------------- Clubs ----------------
+   Firmen aus dem Umfeld eines Clubs (Partner, Sponsoren, Gremien), jede mit Quelle, Art der Verbindung,
+   Nutzen, Idee für eine Zusammenarbeit und einem Ansprechpartner. Der Ansprechpartner ist eine normale
+   Person im Netzwerk, verknüpft über firma.personId. Ein Event mit clubId bekommt die Ansprechpartner als Vorschläge.
+   Format der Club-Datei: {"club":"", "land":"", "stadion":"", "stand":"JJJJ-MM-TT",
+   "spiele":[{datum, wettbewerb, heim, quelle}],
+   "firmen":[{name, branche, ort, land, website, verbindung, verbindungText, nutzen, nutzenGrund, kooperationsidee,
+   quellen[{text,url}], ansprechpartner{wie eine Person im Personen-Import, dazu amtstraeger}}]} */
+function club(id){ return D.clubs.filter(function(c){ return c.id===id; })[0]; }
+function nutzenWert(f){ return f.nutzen===null||f.nutzen===undefined ? -1 : f.nutzen; }
+function firmenVon(clubId){ return D.firmen.filter(function(f){ return f.clubId===clubId; }).sort(function(a,b){ return nutzenWert(b)-nutzenWert(a) || a.name.localeCompare(b.name,"de"); }); }
+function firmenVonPerson(p){ return D.firmen.filter(function(f){ return f.personId===p.id; }); }
+/* Firma zur Person, bevorzugt die vom Club des Events */
+function firmaFuer(p,e){
+  var l=firmenVonPerson(p); if(!l.length) return null;
+  var c=e&&e.clubId ? l.filter(function(f){ return f.clubId===e.clubId; })[0] : null;
+  return c||l[0];
+}
+function spieleVon(c){ return (c.spiele||[]).slice().sort(function(a,b){ return a.datum<b.datum?-1:1; }); }
+/* Heimspiele zuerst, denn dorthin wird eingeladen */
+function naechstesSpiel(c){ var heute=ymd(new Date()), l=spieleVon(c).filter(function(s){ return s.datum>=heute; });
+  return l.filter(function(s){ return s.heim; })[0]||l[0]||null; }
+function spielText(s){ return deDatum(s.datum)+(s.wettbewerb?" · "+s.wettbewerb:"")+(s.heim?" · Heimspiel":" · Auswärtsspiel"); }
+function clubOeffnen(id){ fensterZu(); S.sicht="clubs"; S.clubId=id; zeichnen(); }
+
+function clubUebernehmen(roh){
+  var name=String(roh.club||"").trim(); if(!name) return null;
+  var c=D.clubs.filter(function(x){ return norm(x.name)===norm(name); })[0];
+  if(!c){ c={ id:uid(), name:name }; D.clubs.push(c); }
+  ["land","stadion","stand"].forEach(function(k){ if(roh[k]) c[k]=String(roh[k]); });
+  if(Array.isArray(roh.spiele)) c.spiele=roh.spiele.filter(function(s){ return s&&s.datum; })
+    .map(function(s){ return { datum:String(s.datum), wettbewerb:s.wettbewerb||"", heim:s.heim===true, quelle:s.quelle||"" }; });
+  var neu=0, akt=0;
+  roh.firmen.forEach(function(r){
+    if(!r||!r.name) return;
+    var f=D.firmen.filter(function(x){ return x.clubId===c.id && norm(x.name)===norm(r.name); })[0];
+    if(f) akt++; else { f={ id:uid(), clubId:c.id }; D.firmen.push(f); neu++; }
+    ["name","branche","ort","land","website","verbindung","verbindungText","nutzenGrund","kooperationsidee"].forEach(function(k){ if(r[k]!==undefined&&r[k]!==null&&r[k]!=="") f[k]=String(r[k]); });
+    f.nutzen=zahl(r.nutzen);
+    if(Array.isArray(r.quellen)) f.quellen=r.quellen.filter(function(q){ return q&&(q.text||q.url); }).map(function(q){ return { text:q.text||"", url:q.url||"" }; });
+    if(r.ansprechpartner&&r.ansprechpartner.name){
+      var a=Object.assign({ firma:f.name, branche:f.branche, website:f.website }, r.ansprechpartner);
+      var x=personUebernehmen(a,null,"Club "+c.name);
+      if(x.p.werte.nutzen===null) x.p.werte.nutzen=f.nutzen;
+      if(!x.p.nutzenGrund && f.nutzenGrund) x.p.nutzenGrund=f.nutzenGrund;
+      f.personId=x.p.id;
+    }
+  });
+  D.events.forEach(function(e){ if(e.clubId===c.id) clubVorschlaege(e); });
+  speicher.sichern(D);
+  return { club:c, neu:neu, akt:akt };
+}
+/* Ansprechpartner des Clubs als Vorschläge ins Event, ohne Doppelte */
+function clubVorschlaege(e){
+  if(!e||!e.clubId) return 0;
+  var n=0;
+  firmenVon(e.clubId).forEach(function(f){
+    if(f.personId && pers(f.personId) && !einl(e.id,f.personId)){ zurEvent(e.id,f.personId,"vorgeschlagen"); n++; }
+  });
+  return n;
+}
+
+function zeichneClubs(){
+  var box=$("sicht-clubs");
+  if(S.clubId){ zeichneClub(club(S.clubId)); return; }
+  var h='<h2 style="font-size:22px">Clubs</h2><p class="hint" style="margin:2px 0 12px">Firmen aus dem Umfeld eines Clubs, sortiert nach Nutzen. Ein Event mit Club bekommt deren Ansprechpartner als Vorschläge.</p>'+
+    '<div class="knopfreihe" style="margin-bottom:12px"><button class="btn primary" id="clubImport">Datei importieren</button><button class="btn" id="clubAuftragBtn">Recherche-Auftrag</button></div>';
+  var cs=D.clubs.slice().sort(function(a,b){ var x=naechstesSpiel(a), y=naechstesSpiel(b); if(x&&y) return x.datum<y.datum?-1:1; if(x||y) return x?-1:1; return a.name.localeCompare(b.name,"de"); });
+  h+= cs.length ? '<div class="liste">'+cs.map(function(c){
+      var sp=naechstesSpiel(c);
+      return '<button class="karte" data-club="'+esc(c.id)+'"><span style="min-width:0"><b>'+esc(c.name)+'</b><small>'+esc([c.land, sp?"nächstes Spiel "+spielText(sp):""].filter(Boolean).join(" · "))+'</small></span>'+
+        '<span class="rechts">'+firmenVon(c.id).length+'<br><small>Firmen</small></span></button>';
+    }).join("")+'</div>'
+    : '<div class="leer">Noch keine Clubs. Recherche-Auftrag kopieren, in Claude einfügen und die Datei hier importieren.</div>';
+  box.innerHTML=h;
+  $("clubImport").onclick=clubImportFenster;
+  $("clubAuftragBtn").onclick=function(){ clubAuftrag(""); };
+  alle("[data-club]",function(b){ b.onclick=function(){ clubOeffnen(b.dataset.club); }; },box);
+}
+
+function firmaKarte(f){
+  var p=f.personId?pers(f.personId):null;
+  var q=(f.quellen||[]).filter(function(x){ return x.url; });
+  var weg=p?(p.kontaktwege||[]).filter(function(k){ return k.wert; })[0]:null;
+  return '<div class="kand">'+
+    '<div class="firma-kopf"><div class="wer"><b>'+esc(f.name)+'</b><small>'+esc([f.branche,f.ort].filter(Boolean).join(" · ")||"Branche unbekannt")+'</small></div>'+
+      '<div class="gesamt">'+(f.nutzen===null||f.nutzen===undefined?'–':f.nutzen)+'<small>Nutzen</small></div></div>'+
+    '<div class="tags">'+(f.verbindung?'<span class="chip akz">'+esc(f.verbindung)+'</span>':'<span class="chip warn">Verbindung unbekannt</span>')+'</div>'+
+    (f.verbindungText?'<p class="warum">'+esc(f.verbindungText)+'</p>':'')+
+    (f.kooperationsidee?'<p class="warum"><b>Idee:</b> '+esc(f.kooperationsidee)+'</p>':'')+
+    (f.nutzenGrund?'<p class="hint" style="margin:0">'+esc(f.nutzenGrund)+'</p>':'')+
+    (p?'<div class="ansprech"><div><b>'+esc(p.name)+'</b>'+(p.position?' <span class="hint">'+esc(p.position)+'</span>':'')+'</div>'+heilHinweis(p)+amtsHinweis(p)+
+        (weg?kwZeile(weg):'<span class="chip warn" style="align-self:flex-start">kein Kontaktweg</span>')+
+        '<div class="knopfreihe"><button class="btn klein" data-prof="'+esc(p.id)+'">Profil</button></div></div>'
+      :'<p class="hint" style="margin:0">Kein Ansprechpartner belegt.</p>')+
+    (q.length?'<div class="quellen-zeile">Quellen: '+q.map(function(x,i){ return '<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.text||("Quelle "+(i+1)))+'</a>'; }).join(" · ")+'</div>'
+      :'<span class="chip warn" style="align-self:flex-start">Keine Quelle</span>')+
+  '</div>';
+}
+
+function zeichneClub(c){
+  var box=$("sicht-clubs"), fs=firmenVon(c.id), sp=spieleVon(c);
+  var evs=D.events.filter(function(e){ return e.clubId===c.id; });
+  var h='<button class="btn ghost klein" id="alleClubs" style="margin:-6px 0 6px -8px;display:inline-flex;align-items:center;gap:4px">'+
+      '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Alle Clubs</button>'+
+    '<h2 style="font-size:22px">'+esc(c.name)+'</h2>'+
+    '<dl class="kv eckdaten" style="margin:10px 0 12px">'+
+      (c.land?'<dt>Land</dt><dd>'+esc(c.land)+'</dd>':'')+
+      (c.stadion?'<dt>Stadion</dt><dd>'+esc(c.stadion)+'</dd>':'')+
+      (sp.length?'<dt>Spiele</dt><dd>'+sp.map(function(s){ return esc(spielText(s))+(s.quelle?' <a href="'+esc(s.quelle)+'" target="_blank" rel="noopener">Quelle</a>':''); }).join("<br>")+'</dd>':'')+
+      (evs.length?'<dt>Events</dt><dd>'+evs.map(function(e){ return '<a href="#" data-zuev="'+esc(e.id)+'">'+esc(e.name)+'</a>'; }).join("<br>")+'</dd>':'')+
+      (c.stand?'<dt>Stand</dt><dd>'+esc(deDatum(c.stand))+'</dd>':'')+
+    '</dl>'+
+    '<div class="knopfreihe" style="margin-bottom:14px"><button class="btn primary" id="clubPdf">Liste als PDF</button><button class="btn" id="clubEvent">Event anlegen</button>'+
+      '<button class="btn" id="clubNeuImport">Datei importieren</button><button class="btn" id="clubNeuAuftrag">Recherche-Auftrag</button></div>'+
+    '<div class="sec-label">'+plural(fs.length,"Firma","Firmen")+', sortiert nach Nutzen</div>';
+  h+= fs.length ? '<div class="liste">'+fs.map(firmaKarte).join("")+'</div>' : '<div class="leer">Noch keine Firmen zu diesem Club.</div>';
+  h+='<div style="margin-top:18px"><button class="btn ghost klein" id="clubLoesch" style="color:var(--bad)">Club löschen</button></div>';
+  box.innerHTML=h;
+  kopierKnoepfe(box);
+  alle("[data-prof]",function(b){ b.onclick=function(){ profil(b.dataset.prof,null); }; },box);
+  alle("[data-zuev]",function(a){ a.onclick=function(ev_){ ev_.preventDefault(); eventOeffnen(a.dataset.zuev,"kandidaten"); }; },box);
+  $("alleClubs").onclick=function(){ S.clubId=null; zeichnen(); };
+  $("clubPdf").onclick=function(){ clubListe(c); };
+  $("clubEvent").onclick=function(){ var s=naechstesSpiel(c); eventFormular(null,{ clubId:c.id, name:"Spiel gegen "+c.name, datum:s?s.datum:ymd(new Date(Date.now()+5*86400000)) }); };
+  $("clubNeuImport").onclick=clubImportFenster;
+  $("clubNeuAuftrag").onclick=function(){ clubAuftrag(c.name); };
+  $("clubLoesch").onclick=function(){
+    fenster("Club löschen",'<p style="margin:0"><b>'+esc(c.name)+'</b> mit '+plural(fs.length,"Firma","Firmen")+' löschen? Die Ansprechpartner bleiben im Netzwerk, Events verlieren nur die Zuordnung.</p>',
+      '<button class="btn danger" id="clJa">Löschen</button><button class="btn" id="clNein">Abbrechen</button>');
+    $("clNein").onclick=fensterZu;
+    $("clJa").onclick=function(){
+      D.firmen=D.firmen.filter(function(f){ return f.clubId!==c.id; });
+      D.clubs=D.clubs.filter(function(x){ return x.id!==c.id; });
+      D.events.forEach(function(e){ if(e.clubId===c.id) delete e.clubId; });
+      S.clubId=null; fensterZu(); sichern(); toast("Club gelöscht.");
+    };
+  };
+}
+
+function clubImportFenster(){
+  fenster("Club-Datei importieren",
+    '<p class="hint" style="margin:0">Datei aus der Recherche wählen oder den Inhalt einfügen. Firmen landen beim Club, Ansprechpartner zusätzlich im Netzwerk. Ein zweiter Import aktualisiert, statt zu verdoppeln.</p>'+
+    '<div class="field"><label for="ci_datei">Datei</label><input id="ci_datei" type="file" accept=".json,application/json"></div>'+
+    '<div class="field"><label for="ci_text">Oder einfügen</label><textarea id="ci_text" style="min-height:160px" class="mono" placeholder="{&quot;club&quot;:&quot;…&quot;,&quot;firmen&quot;:[…]}"></textarea></div>'+
+    '<p class="err" id="ci_err" hidden></p>',
+    '<button class="btn primary" id="ciLos">Importieren</button>');
+  $("ci_datei").onchange=function(){
+    var f=this.files[0]; if(!f) return; var r=new FileReader();
+    r.onload=function(){ $("ci_text").value=r.result; $("ciLos").click(); }; r.readAsText(f);
+  };
+  $("ciLos").onclick=function(){
+    function fehler(t){ var f=$("ci_err"); f.hidden=false; f.textContent=t; }
+    var roh; try{ roh=JSON.parse($("ci_text").value); }catch(err){ fehler("Das ist keine gültige Datei. Bitte die Datei unverändert einfügen."); return; }
+    if(!roh||!Array.isArray(roh.firmen)){ fehler("Das ist keine Club-Datei. Personen-Dateien gehören in ein Event unter Kandidaten."); return; }
+    var r=clubUebernehmen(roh);
+    if(!r){ fehler("In der Datei fehlt der Name des Clubs."); return; }
+    clubOeffnen(r.club.id);
+    toast(r.club.name+": "+r.neu+" Firmen neu, "+r.akt+" aktualisiert.");
+  };
+}
+
+function clubAuftrag(name){
+  fenster("Recherche-Auftrag",
+    '<p style="margin:0">Die Suche läuft über Claude im Chat:</p>'+
+    '<div class="field"><label for="c_name">Club</label><input id="c_name" value="'+esc(name||"")+'" placeholder="Name des Clubs" autocomplete="off"></div>'+
+    '<div class="field"><label for="c_anz">Wie viele Firmen?</label><select id="c_anz"><option>10</option><option selected>15</option><option>20</option><option>30</option></select></div>'+
+    '<div class="textkarte mono" id="c_befehl" style="font-size:13px"></div>'+
+    '<button class="btn primary" id="c_kopie">Auftrag kopieren</button>'+
+    '<ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px">'+
+      '<li>Auftrag kopieren und in Claude Code einfügen.</li>'+
+      '<li>Claude legt eine Datei in <span class="mono">Downloads/netboard/recherche</span> ab.</li>'+
+      '<li>Hier auf <b>Datei importieren</b> tippen und die Datei wählen.</li></ol>',
+    '<button class="btn primary" id="cZuImport">Datei importieren</button>');
+  function befehl(){ return "/netboard club "+($("c_name").value.trim()||"<Club>")+" "+$("c_anz").value; }
+  function zeigen(){ $("c_befehl").textContent=befehl(); }
+  zeigen(); $("c_name").oninput=zeigen; $("c_anz").onchange=zeigen;
+  $("c_kopie").onclick=function(){ kopieren(befehl()); };
+  $("cZuImport").onclick=clubImportFenster;
+}
+
+/* Druckliste pro Club, damit jemand ohne App damit arbeiten kann (Muster einladerListe) */
+function clubListe(c){
+  var fs=firmenVon(c.id), sp=spieleVon(c);
+  function link(u,t){ return '<a href="'+esc(u)+'">'+esc(t||u)+'</a>'; }
+  var html='<!doctype html><html lang="de"><head><meta charset="utf-8"><title>'+esc(c.name)+' · Firmenliste</title><style>'+
+    'body{font:13.5px/1.45 -apple-system,system-ui,sans-serif;color:#141413;margin:24px}h1{font-size:20px;margin:0 0 4px}.k{color:#555;margin:0 0 4px}'+
+    '.f{border-top:1px solid #ccc;padding:12px 0;break-inside:avoid}.f>b{font-size:15px}.n{font-weight:700;font-variant-numeric:tabular-nums;float:right}.m{color:#555}'+
+    '.z{margin-top:4px}.h{border-left:3px solid #D25A00;padding-left:8px;margin-top:4px}.q{color:#555;font-size:12px;margin-top:4px}'+
+    'a{color:#0B5FA5;word-break:break-all}.box{display:inline-block;width:12px;height:12px;border:1px solid #555;margin-right:6px;vertical-align:-1px}</style></head><body>'+
+    '<h1>'+esc(c.name)+'</h1>'+
+    '<p class="k">'+esc([c.land,c.stadion,c.stand?"Stand "+deDatum(c.stand):""].filter(Boolean).join(" · "))+' · '+plural(fs.length,"Firma","Firmen")+', sortiert nach Nutzen (0 bis 100)</p>'+
+    (sp.length?'<p class="k">Spiele: '+sp.map(function(s){ return esc(spielText(s)); }).join("; ")+'</p>':'')+
+    '<p class="k">Jede Verbindung ist mit Quelle belegt. Kontaktdaten sind dienstlich. E-Mail erst nach einem ersten Telefonat.</p>'+
+    fs.map(function(f){
+      var p=f.personId?pers(f.personId):null;
+      var wege=p?(p.kontaktwege||[]).filter(function(k){ return k.wert; }).map(function(k){ return esc(k.art+(k.typ?" ("+k.typ+")":"")+": ")+(/^https?:/.test(k.wert)?link(k.wert):esc(k.wert)); }):[];
+      var prof=p?(p.profile||[]).map(function(x){ return esc(x.art||"Profil")+": "+link(x.url); }):[];
+      var hin=[]; if(p&&p.heilberuf) hin.push("Heilberuf: Einladung nie mit Vermittlung von Patienten verbinden, vorher rechtlich klären.");
+      if(p&&p.amtstraeger) hin.push("Amtsträger: Einladung kann melde- oder genehmigungspflichtig sein, vorher klären.");
+      return '<div class="f"><span class="box"></span><b>'+esc(f.name)+'</b><span class="n">'+(f.nutzen===null||f.nutzen===undefined?'–':f.nutzen)+'</span>'+
+        '<div class="m">'+esc([f.branche,f.ort].filter(Boolean).join(" · "))+'</div>'+
+        '<div class="z"><b>Verbindung:</b> '+esc([f.verbindung||"unbekannt",f.verbindungText].filter(Boolean).join(", "))+'</div>'+
+        (f.kooperationsidee?'<div class="z"><b>Idee:</b> '+esc(f.kooperationsidee)+'</div>':'')+
+        (f.nutzenGrund?'<div class="z m">'+esc(f.nutzenGrund)+'</div>':'')+
+        '<div class="z"><b>Ansprechpartner:</b> '+(p?esc([p.name,p.position].filter(Boolean).join(", "))+(wege.length?'<br>'+wege.join("<br>"):'<br><i>kein Kontaktweg</i>')+(prof.length?'<br>'+prof.join("<br>"):''):'<i>nicht belegt</i>')+'</div>'+
+        hin.map(function(t){ return '<div class="h">'+esc(t)+'</div>'; }).join("")+
+        ((f.quellen||[]).length?'<div class="q">Quellen: '+f.quellen.map(function(x){ return esc(x.text||"")+(x.url?" "+link(x.url):""); }).join("; ")+'</div>':'')+
+      '</div>';
+    }).join("")+'</body></html>';
+  var w=window.open("","_blank");
+  if(w){ w.document.open(); w.document.write(html); w.document.close(); setTimeout(function(){ try{ w.focus(); w.print(); }catch(err){} },400); }
+  else herunterladen("firmenliste-"+ymd(new Date())+".html",html,"text/html");
+}
+
 /* ---------------- Einstellungen ---------------- */
 function einstellungen(){
   var summe=TEILE.reduce(function(s,t){ return s+(Number(D.gewichte[t.k])||0); },0);
@@ -1639,7 +1899,7 @@ function einstellungen(){
       '<div class="modus" id="hilfeBar"><button data-h="an">An</button><button data-h="aus">Aus</button></div></div>'+
     '<hr class="sep">'+
     '<div><div class="sec-label" style="margin-top:0">Daten</div>'+
-      '<p class="hint" style="margin:0 0 8px">'+plural(D.events.length,"Event","Events")+' · '+plural(D.personen.length,"Person","Personen")+' · '+plural(D.verbindungen.length,"Verbindung","Verbindungen")+'. Liegt nur in diesem Browser.</p>'+
+      '<p class="hint" style="margin:0 0 8px">'+plural(D.events.length,"Event","Events")+' · '+plural(D.personen.length,"Person","Personen")+' · '+plural(D.verbindungen.length,"Verbindung","Verbindungen")+' · '+plural(D.clubs.length,"Club","Clubs")+'. Liegt nur in diesem Browser.</p>'+
       '<div class="knopfreihe"><button class="btn klein" id="expBtn">Sicherung herunterladen</button><button class="btn klein" id="impBtn">Sicherung einspielen</button>'+
       '<button class="btn klein" id="bspBtn">Beispiel laden</button></div>'+
       '<input type="file" id="impDatei" accept=".json,application/json" hidden>'+
@@ -1666,7 +1926,7 @@ function einstellungen(){
   $("bspBtn").onclick=beispielLaden;
   $("abmeldenBtn").onclick=abmelden;
   $("allesBtn").onclick=function(){
-    $("allesBox").innerHTML='<div class="bestaetigen"><p style="margin:0">Wirklich <b>alle</b> Events, Personen und Verbindungen löschen?</p>'+
+    $("allesBox").innerHTML='<div class="bestaetigen"><p style="margin:0">Wirklich <b>alle</b> Events, Personen, Verbindungen und Clubs löschen?</p>'+
       '<div class="reihe"><button class="btn danger" id="jaBtn">Alles löschen</button><button class="btn" id="neinBtn">Abbrechen</button></div></div>';
     $("neinBtn").onclick=einstellungen;
     $("jaBtn").onclick=function(){ var g=D.gewichte; D=leer(); D.gewichte=g; S.sicht="start"; fensterZu(); sichern(); toast("Alles gelöscht."); };
@@ -1770,7 +2030,7 @@ function start(){
   $("markeBtn").onclick=function(){ fensterZu(); S.sicht="start"; zeichnen(); };
   $("einstBtn").onclick=einstellungen;
   $("neuBtn").onclick=function(){ eventFormular(null); };
-  alle(".ul-knopf",function(b){ b.onclick=function(){ fensterZu(); S.sicht=b.dataset.sicht; zeichnen(); }; });
+  alle(".ul-knopf",function(b){ b.onclick=function(){ fensterZu(); S.sicht=b.dataset.sicht; if(S.sicht==="clubs") S.clubId=null; zeichnen(); }; });
   if(angemeldet()){ document.body.classList.remove("gesperrt"); $("anmeldung").hidden=true; zeichnen(); }
   else anmeldungZeigen();
   if("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(function(){});
