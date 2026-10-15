@@ -141,6 +141,24 @@ hr.sep{border:0;border-top:1px solid var(--line-soft);margin:4px 0;width:100%}
 .firma-kopf small{display:block;color:var(--ink-2);font-size:13px}
 .ansprech{border-left:3px solid var(--accent);padding:2px 0 2px 10px;display:flex;flex-direction:column;gap:6px}
 .quellen-zeile{font-size:12.5px;color:var(--ink-3);overflow-wrap:anywhere}
+/* Alle Firmen */
+.firma-treffer{align-items:flex-start}
+.firma-treffer .ft-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.firma-treffer .ft-idee{color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.firma-treffer .tags{margin-top:4px}
+.firma-treffer .rechts{flex:0 0 auto}
+.firma-treffer .ft-n{display:block;font-size:20px;font-weight:600;color:var(--accent-ink);line-height:1.1}
+.fs-filter{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:0 12px;margin:10px 0 0}
+.fs-filter summary{cursor:pointer;min-height:48px;display:flex;align-items:center;font-weight:600;font-size:14px;list-style:none}
+.fs-filter summary::-webkit-details-marker{display:none}
+.fs-filter summary span{color:var(--ink-3);font-weight:500;margin-left:4px}
+.fs-filter summary .ico{margin-left:auto;color:var(--ink-3);transition:transform .15s}
+.fs-filter[open] summary .ico{transform:rotate(180deg)}
+.fs-filter[open] summary{border-bottom:1px solid var(--line-soft);margin-bottom:12px}
+.fs-filter .fs-ap{margin:10px 0 12px}
+.fs-zeile{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0 8px;min-height:40px}
+.fs-zeile b{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:14px}
+.fs-mehr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
 
 /* Runde */
 .zeile-gast{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;flex-wrap:wrap}
@@ -318,7 +336,7 @@ var OHNE_SPEICHER=false;
 try{ localStorage.setItem("lr_test","1"); localStorage.removeItem("lr_test"); }catch(e){ OHNE_SPEICHER=true; }
 var LS={
   get:function(k){ if(OHNE_SPEICHER) return null; try{ return localStorage.getItem(k); }catch(e){ return null; } },
-  set:function(k,v){ if(OHNE_SPEICHER) return; try{ localStorage.setItem(k,v); }catch(e){ toast("Speicher voll. Bitte Sicherung herunterladen."); } }
+  set:function(k,v){ if(OHNE_SPEICHER) return true; try{ localStorage.setItem(k,v); return true; }catch(e){ toast("Speicher voll. Bitte Sicherung herunterladen."); return false; } }
 };
 function toast(t){
   var el=document.createElement("div"); el.className="toast"; el.textContent=t;
@@ -353,10 +371,13 @@ var speicher={
     if(d.gewichte.nutzen===undefined) d.gewichte.nutzen=GEWICHTE_STANDARD.nutzen;
     return d;
   },
-  sichern:function(d){ LS.set(SCHLUESSEL,JSON.stringify(d)); }
+  sichern:function(d){ return LS.set(SCHLUESSEL,kompakt(JSON.stringify(d))); }
 };
+/* Zeichen über 255 (z. B. „“ oder griechische Namen) als \uXXXX speichern. JSON.parse liest sie unverändert
+   zurück, und Safari zählt den Speicher dann mit einem statt zwei Byte pro Zeichen (Grenze dort 5 MB). */
+function kompakt(json){ return json.replace(/[\u0100-\uffff]/g,function(c){ return "\\u"+("000"+c.charCodeAt(0).toString(16)).slice(-4); }); }
 var D=speicher.laden();
-var S={ sicht:"start", eventId:null, clubId:null, tab:"kandidaten", filter:"vorschlaege", suche:"", letzteSicht:null };
+var S={ sicht:"start", eventId:null, clubId:null, clubTab:"clubs", fs:fsLeer(), tab:"kandidaten", filter:"vorschlaege", suche:"", letzteSicht:null };
 function sichern(){ speicher.sichern(D); zeichnen(); }
 
 /* ---------------- Zugriff ---------------- */
@@ -509,7 +530,7 @@ function zeichnen(){
   $("sicht-personen").hidden = S.sicht!=="personen";
   $("sicht-clubs").hidden = S.sicht!=="clubs";
   alle(".ul-knopf",function(b){ b.setAttribute("aria-selected",String(b.dataset.sicht===S.sicht)); });
-  var schl=S.sicht+(S.sicht==="event"?S.eventId:(S.sicht==="clubs"?S.clubId:""));
+  var schl=S.sicht+(S.sicht==="event"?S.eventId:(S.sicht==="clubs"?(S.clubId||S.clubTab):""));
   if(S.letzteSicht!==schl){ S.letzteSicht=schl; window.scrollTo(0,0); }
   if(S.sicht==="start") zeichneStart();
   else if(S.sicht==="event") zeichneEvent();
@@ -1673,7 +1694,7 @@ function sucheFenster(e){
    Firmen aus dem Umfeld eines Clubs (Partner, Sponsoren, Gremien), jede mit Quelle, Art der Verbindung,
    Nutzen, Idee für eine Zusammenarbeit und einem Ansprechpartner. Der Ansprechpartner ist eine normale
    Person im Netzwerk, verknüpft über firma.personId. Ein Event mit clubId bekommt die Ansprechpartner als Vorschläge.
-   Format der Club-Datei: {"club":"", "land":"", "stadion":"", "stand":"JJJJ-MM-TT",
+   Format der Club-Datei: {"club":"", "land":"", "liga":"", "stadion":"", "stand":"JJJJ-MM-TT",
    "spiele":[{datum, wettbewerb, heim, quelle}],
    "firmen":[{name, branche, ort, land, website, verbindung, verbindungText, nutzen, nutzenGrund, kooperationsidee,
    quellen[{text,url}], ansprechpartner{wie eine Person im Personen-Import, dazu amtstraeger}}]} */
@@ -1694,21 +1715,56 @@ function naechstesSpiel(c){ var heute=ymd(new Date()), l=spieleVon(c).filter(fun
 function spielText(s){ return deDatum(s.datum)+(s.wettbewerb?" · "+s.wettbewerb:"")+(s.heim?" · Heimspiel":" · Auswärtsspiel"); }
 function clubOeffnen(id){ fensterZu(); S.sicht="clubs"; S.clubId=id; zeichnen(); }
 
-function clubUebernehmen(roh){
+/* Abgleich von Firmen- und Clubnamen: Groß- und Kleinschreibung, Umlaute, Akzente, Satzzeichen,
+   Rechtsform und Klammerzusatz zählen nicht. "Muster Bau GmbH & Co. KG" und "Muster Bau" sind dieselbe Firma. */
+var RECHTSFORM={};
+"gmbh mbh ag se kg kgaa ohg gbr eg ev ug haftungsbeschraenkt co cie sa spa srl sl sas sarl ltd limited inc llc plc bv nv ab as oy corp corporation holding gruppe group und and"
+  .split(" ").forEach(function(w){ RECHTSFORM[w]=1; });
+function ohneAkzent(s){ return norm2(s).normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
+function namensSchluessel(n){
+  var w=ohneAkzent(n).replace(/\([^)]*\)/g," ").replace(/\.(?=\S)/g,"").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  var k=w.filter(function(x){ return !RECHTSFORM[x]; });
+  return (k.length?k:w).join(" ");
+}
+/* Nur echte Webadressen werden zu Links, alles andere bleibt Text */
+function linkUrl(u){ u=String(u||"").trim(); return /^https?:\/\//i.test(u)?u:""; }
+function quellenVereinen(alt,neu){
+  var out=(alt||[]).slice(), da={};
+  function schl(q){ return q.url?normUrl(q.url):"t:"+q.text; }
+  out.forEach(function(q){ da[schl(q)]=1; });
+  (neu||[]).forEach(function(q){ var k=schl(q); if(!da[k]){ da[k]=1; out.push(q); } });
+  return out;
+}
+
+/* Übernimmt eine Club-Datei. ohneSichern: beim Import mehrerer Dateien wird erst am Ende einmal gespeichert. */
+function clubUebernehmen(roh,ohneSichern){
   var name=String(roh.club||"").trim(); if(!name) return null;
-  var c=D.clubs.filter(function(x){ return norm(x.name)===norm(name); })[0];
+  var ck=namensSchluessel(name);
+  var c=D.clubs.filter(function(x){ return namensSchluessel(x.name)===ck; })[0];
   if(!c){ c={ id:uid(), name:name }; D.clubs.push(c); }
-  ["land","stadion","stand"].forEach(function(k){ if(roh[k]) c[k]=String(roh[k]); });
-  if(Array.isArray(roh.spiele)) c.spiele=roh.spiele.filter(function(s){ return s&&s.datum; })
+  ["land","liga","stadion","stand"].forEach(function(k){ if(roh[k]) c[k]=String(roh[k]); });
+  // Eine leere Spielliste überschreibt keine schon bekannten Spiele
+  if(Array.isArray(roh.spiele) && roh.spiele.length) c.spiele=roh.spiele.filter(function(s){ return s&&s.datum; })
     .map(function(s){ return { datum:String(s.datum), wettbewerb:s.wettbewerb||"", heim:s.heim===true, quelle:s.quelle||"" }; });
-  var neu=0, akt=0;
+  var schon={}, gesehen={}, neu=0, akt=0, doppelt=0;
+  D.firmen.forEach(function(f){ if(f.clubId===c.id) schon[namensSchluessel(f.name)]=f; });
   roh.firmen.forEach(function(r){
     if(!r||!r.name) return;
-    var f=D.firmen.filter(function(x){ return x.clubId===c.id && norm(x.name)===norm(r.name); })[0];
-    if(f) akt++; else { f={ id:uid(), clubId:c.id }; D.firmen.push(f); neu++; }
-    ["name","branche","ort","land","website","verbindung","verbindungText","nutzenGrund","kooperationsidee"].forEach(function(k){ if(r[k]!==undefined&&r[k]!==null&&r[k]!=="") f[k]=String(r[k]); });
-    f.nutzen=zahl(r.nutzen);
-    if(Array.isArray(r.quellen)) f.quellen=r.quellen.filter(function(q){ return q&&(q.text||q.url); }).map(function(q){ return { text:q.text||"", url:q.url||"" }; });
+    var k=namensSchluessel(r.name), f=schon[k];
+    var qs=Array.isArray(r.quellen) ? r.quellen.filter(function(q){ return q&&(q.text||q.url); }).map(function(q){ return { text:String(q.text||""), url:String(q.url||"") }; }) : [];
+    // Dieselbe Firma zweimal in einer Datei: zusammenführen statt überschreiben
+    if(gesehen[k]){
+      doppelt++;
+      if(r.verbindung && norm(r.verbindung)!==norm(f.verbindung) && norm(f.verbindungText).indexOf(norm(r.verbindung))<0)
+        f.verbindungText=(f.verbindungText?String(f.verbindungText).replace(/[.\s]*$/,". "):"")+"Außerdem "+r.verbindung+(r.verbindungText?": "+r.verbindungText:"");
+      f.quellen=quellenVereinen(f.quellen,qs);
+      return;
+    }
+    gesehen[k]=1;
+    if(f) akt++; else { f={ id:uid(), clubId:c.id }; D.firmen.push(f); schon[k]=f; neu++; }
+    ["name","branche","ort","land","website","verbindung","verbindungText","nutzenGrund","kooperationsidee"].forEach(function(k2){ if(r[k2]!==undefined&&r[k2]!==null&&r[k2]!=="") f[k2]=String(r[k2]); });
+    if(r.nutzen!==undefined || f.nutzen===undefined) f.nutzen=zahl(r.nutzen);
+    f.quellen=quellenVereinen(f.quellen,qs);
     if(r.ansprechpartner&&r.ansprechpartner.name){
       var a=Object.assign({ firma:f.name, branche:f.branche, website:f.website }, r.ansprechpartner);
       var x=personUebernehmen(a,null,"Club "+c.name);
@@ -1718,8 +1774,21 @@ function clubUebernehmen(roh){
     }
   });
   D.events.forEach(function(e){ if(e.clubId===c.id) clubVorschlaege(e); });
-  speicher.sichern(D);
-  return { club:c, neu:neu, akt:akt };
+  var gesichert=ohneSichern ? null : speicher.sichern(D);
+  return { club:c, neu:neu, akt:akt, doppelt:doppelt, gesichert:gesichert };
+}
+/* Mehrere Dateien auf einmal: [{name, text}]. Gespeichert wird einmal am Ende. */
+function clubDateienUebernehmen(liste_){
+  var ok=[], fehler=[];
+  liste_.forEach(function(d){
+    var roh=null; try{ roh=JSON.parse(d.text); }catch(err){}
+    if(!roh||typeof roh!=="object"){ fehler.push({ datei:d.name, text:"keine gültige Datei. Bitte unverändert einfügen." }); return; }
+    if(!Array.isArray(roh.firmen)){ fehler.push({ datei:d.name, text:"keine Club-Datei. Personen-Dateien gehören in ein Event unter Kandidaten." }); return; }
+    var r=clubUebernehmen(roh,true);
+    if(!r){ fehler.push({ datei:d.name, text:"In der Datei fehlt der Name des Clubs." }); return; }
+    r.datei=d.name; ok.push(r);
+  });
+  return { ok:ok, fehler:fehler, gesichert: ok.length ? speicher.sichern(D) : true };
 }
 /* Ansprechpartner des Clubs als Vorschläge ins Event, ohne Doppelte */
 function clubVorschlaege(e){
@@ -1734,27 +1803,192 @@ function clubVorschlaege(e){
 function zeichneClubs(){
   var box=$("sicht-clubs");
   if(S.clubId){ zeichneClub(club(S.clubId)); return; }
-  var h='<h2 style="font-size:22px">Clubs</h2><p class="hint" style="margin:2px 0 12px">Firmen aus dem Umfeld eines Clubs, sortiert nach Nutzen. Ein Event mit Club bekommt deren Ansprechpartner als Vorschläge.</p>'+
-    '<div class="knopfreihe" style="margin-bottom:12px"><button class="btn primary" id="clubImport">Datei importieren</button><button class="btn" id="clubAuftragBtn">Recherche-Auftrag</button></div>';
-  var cs=D.clubs.slice().sort(function(a,b){ var x=naechstesSpiel(a), y=naechstesSpiel(b); if(x&&y) return x.datum<y.datum?-1:1; if(x||y) return x?-1:1; return a.name.localeCompare(b.name,"de"); });
-  h+= cs.length ? '<div class="liste">'+cs.map(function(c){
-      var sp=naechstesSpiel(c);
-      return '<button class="karte" data-club="'+esc(c.id)+'"><span style="min-width:0"><b>'+esc(c.name)+'</b><small>'+esc([c.land, sp?"nächstes Spiel "+spielText(sp):""].filter(Boolean).join(" · "))+'</small></span>'+
-        '<span class="rechts">'+firmenVon(c.id).length+'<br><small>Firmen</small></span></button>';
-    }).join("")+'</div>'
-    : '<div class="leer">Noch keine Clubs. Recherche-Auftrag kopieren, in Claude einfügen und die Datei hier importieren.</div>';
-  box.innerHTML=h;
-  $("clubImport").onclick=clubImportFenster;
-  $("clubAuftragBtn").onclick=function(){ clubAuftrag(""); };
-  alle("[data-club]",function(b){ b.onclick=function(){ clubOeffnen(b.dataset.club); }; },box);
+  var h='<h2 style="font-size:22px">Clubs</h2>'+
+    '<div class="modus" id="clubModus" style="margin:10px 0 12px"><button data-m="clubs">Clubs</button><button data-m="firmen">Alle Firmen</button></div>';
+  if(S.clubTab==="firmen"){
+    box.innerHTML=h+firmenSucheHtml();
+    firmenSucheVerdrahten();
+  } else {
+    h+='<p class="hint" style="margin:0 0 12px">Firmen aus dem Umfeld eines Clubs, sortiert nach Nutzen. Ein Event mit Club bekommt deren Ansprechpartner als Vorschläge.</p>'+
+      '<div class="knopfreihe" style="margin-bottom:12px"><button class="btn primary" id="clubImport">Dateien importieren</button><button class="btn" id="clubAuftragBtn">Recherche-Auftrag</button></div>';
+    var cs=D.clubs.slice().sort(function(a,b){ var x=naechstesSpiel(a), y=naechstesSpiel(b); if(x&&y) return x.datum<y.datum?-1:1; if(x||y) return x?-1:1; return a.name.localeCompare(b.name,"de"); });
+    h+= cs.length ? '<div class="liste">'+cs.map(function(c){
+        var sp=naechstesSpiel(c);
+        return '<button class="karte" data-club="'+esc(c.id)+'"><span style="min-width:0"><b>'+esc(c.name)+'</b><small>'+esc([c.liga||c.land, sp?"nächstes Spiel "+spielText(sp):""].filter(Boolean).join(" · "))+'</small></span>'+
+          '<span class="rechts">'+firmenVon(c.id).length+'<br><small>Firmen</small></span></button>';
+      }).join("")+'</div>'
+      : '<div class="leer">Noch keine Clubs. Recherche-Auftrag kopieren, in Claude einfügen und die Datei hier importieren.</div>';
+    box.innerHTML=h;
+    $("clubAuftragBtn").onclick=function(){ clubAuftrag(""); };
+    alle("[data-club]",function(b){ b.onclick=function(){ clubOeffnen(b.dataset.club); }; },box);
+  }
+  if($("clubImport")) $("clubImport").onclick=clubImportFenster;
+  alle("#clubModus button",function(b){
+    b.setAttribute("aria-pressed",String(b.dataset.m===(S.clubTab||"clubs")));
+    b.onclick=function(){ if(S.clubTab===b.dataset.m) return; S.clubTab=b.dataset.m; zeichnen(); };
+  },box);
 }
 
-function firmaKarte(f){
+/* ---------------- Alle Firmen ----------------
+   Eine Firma mit mehreren Clubs steht einmal da (Abgleich über namensSchluessel), gespeichert bleibt sie
+   pro Club. Gruppen und Sortierungen werden beim Zeichnen der Ansicht einmal gebaut, beim Tippen wird nur
+   gefiltert und höchstens S.fs.zahl Karten gezeichnet. */
+var FG=null, FT=[];
+var KOLL=(window.Intl&&Intl.Collator) ? new Intl.Collator("de",{sensitivity:"base",numeric:true}) : null;
+function vergleich(a,b){ return KOLL ? KOLL.compare(a,b) : String(a).localeCompare(b,"de"); }
+function tausend(n){ return Number(n).toLocaleString("de-DE"); }
+function fsLeer(alt){ return { q:"", club:"", liga:"", branche:"", verbindung:"", min:"", ap:false, sort:alt?alt.sort:"nutzen", zahl:100, offen:alt?alt.offen:undefined }; }
+function firmenGruppen(){
+  var cm={}, pm={}, nach={}, l=[];
+  D.clubs.forEach(function(c){ cm[c.id]=c; });
+  D.personen.forEach(function(p){ pm[p.id]=p; });
+  D.firmen.forEach(function(f){
+    var c=cm[f.clubId]; if(!c) return;
+    var k=namensSchluessel(f.name)||f.id, x=nach[k];
+    if(!x){ x=nach[k]={ k:k, e:[], clubs:[] }; l.push(x); }
+    x.e.push({ f:f, c:c, n:nutzenWert(f), br:norm(f.branche), vb:norm(f.verbindung), liga:norm(c.liga), p:(f.personId&&pm[f.personId])||null });
+    if(x.clubs.indexOf(c)<0) x.clubs.push(c);
+  });
+  l.forEach(function(x){
+    x.e.sort(function(a,b){ return b.n-a.n || vergleich(a.c.name,b.c.name); });
+    function erstes(k){ var y=x.e.filter(function(z){ return z.f[k]; })[0]; return y?y.f[k]:""; }
+    x.name=x.e[0].f.name; x.nutzen=x.e[0].n; x.branche=erstes("branche"); x.ort=erstes("ort"); x.land=erstes("land"); x.website=erstes("website");
+    x.ap=x.e.some(function(y){ return y.p; });
+    x.clubs.sort(function(a,b){ return vergleich(a.name,b.name); });
+    x.such=ohneAkzent(x.e.map(function(y){ return [y.f.name,y.f.branche,y.f.ort,y.f.kooperationsidee].join(" "); }).join(" "));
+  });
+  return { l:l, sortiert:{}, werte:{} };
+}
+function firmenSortiert(art){
+  if(FG.sortiert[art]) return FG.sortiert[art];
+  var s=FG.l.slice();
+  if(art==="name") s.sort(function(a,b){ return vergleich(a.name,b.name); });
+  else if(art==="club") s.sort(function(a,b){ return vergleich(a.clubs[0].name,b.clubs[0].name) || b.nutzen-a.nutzen || vergleich(a.name,b.name); });
+  else s.sort(function(a,b){ return b.nutzen-a.nutzen || vergleich(a.name,b.name); });
+  return (FG.sortiert[art]=s);
+}
+/* Werte für einen Filter mit Anzahl Firmen, z. B. alle Branchen */
+function fsWerte(feld){
+  var m={}, l=[];
+  FG.l.forEach(function(x){ var da={};
+    x.e.forEach(function(y){ var roh=feld(y); if(!roh) return; var k=norm(roh); if(da[k]) return; da[k]=1;
+      if(!m[k]){ m[k]={ v:k, t:String(roh).trim(), n:0 }; l.push(m[k]); } m[k].n++; });
+  });
+  return l.sort(function(a,b){ return vergleich(a.t,b.t); });
+}
+function fsAktiv(){ var o=S.fs; return [o.club,o.liga,o.branche,o.verbindung,o.min,o.ap].filter(Boolean).length; }
+/* Passt eine Club-Verbindung zu allen gesetzten Filtern? */
+function fsPasst(y){
+  var o=S.fs;
+  return (!o.club||y.c.id===o.club) && (!o.liga||y.liga===o.liga) && (!o.branche||y.br===o.branche) &&
+    (!o.verbindung||y.vb===o.verbindung) && y.n>=(o.min?Number(o.min):-1) && (!o.ap||y.p);
+}
+function firmenFiltern(){
+  var o=S.fs, w=ohneAkzent(o.q).split(/\s+/).filter(Boolean);
+  // Nach Club sortieren ergibt bei einem gewählten Club nichts, dann nach Nutzen
+  return firmenSortiert(o.sort==="club"&&o.club ? "nutzen" : o.sort).filter(function(x){
+    for(var i=0;i<w.length;i++) if(x.such.indexOf(w[i])<0) return false;
+    return x.e.some(fsPasst);
+  });
+}
+function fsAuswahl(id,titel,optionen){ return '<div class="field"><label for="'+id+'">'+titel+'</label><select id="'+id+'">'+optionen+'</select></div>'; }
+function fsOptionen(werte,gewaehlt,alleText){
+  return '<option value="">'+esc(alleText)+'</option>'+werte.map(function(w){
+    return '<option value="'+esc(w.v)+'"'+(w.v===gewaehlt?' selected':'')+'>'+esc(w.t)+(w.n!==undefined?' ('+w.n+')':'')+'</option>'; }).join("");
+}
+function firmenSucheHtml(){
+  FG=firmenGruppen();
+  if(!FG.l.length) return '<div class="leer">Noch keine Firmen. Club-Dateien importieren, dann stehen hier alle Firmen aus allen Clubs.</div>'+
+    '<div class="knopfreihe" style="margin-top:12px"><button class="btn primary" id="clubImport">Dateien importieren</button></div>';
+  var o=S.fs, nc={};
+  FG.l.forEach(function(x){ x.clubs.forEach(function(c){ nc[c.id]=(nc[c.id]||0)+1; }); });
+  var clubs=D.clubs.filter(function(c){ return nc[c.id]; }).sort(function(a,b){ return vergleich(a.name,b.name); }).map(function(c){ return { v:c.id, t:c.name, n:nc[c.id] }; });
+  var W=FG.werte;
+  W.liga=fsWerte(function(y){ return y.c.liga; });
+  W.branche=fsWerte(function(y){ return y.f.branche; });
+  W.verbindung=fsWerte(function(y){ return y.f.verbindung; });
+  var offen=o.offen!==undefined ? o.offen : window.innerWidth>640;
+  return '<p class="hint erkl" style="margin:0 0 10px">Alle Firmen aus allen Clubs. Dieselbe Firma bei mehreren Clubs steht einmal da, mit allen Verbindungen.</p>'+
+    '<div class="field"><label for="fs_q">Suche</label><input id="fs_q" type="search" value="'+esc(o.q)+'" placeholder="Name, Branche, Ort oder Idee" autocomplete="off" enterkeyhint="search"></div>'+
+    '<details class="fs-filter" id="fs_box"'+(offen?' open':'')+'><summary>Filter und Sortierung<span id="fs_aktiv"></span>'+
+      '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></summary>'+
+      '<div class="three">'+
+        fsAuswahl("fs_club","Club",fsOptionen(clubs,o.club,"Alle Clubs"))+
+        (W.liga.length?fsAuswahl("fs_liga","Liga",fsOptionen(W.liga,o.liga,"Alle Ligen")):'')+
+        fsAuswahl("fs_branche","Branche",fsOptionen(W.branche,o.branche,"Alle Branchen"))+
+        fsAuswahl("fs_vb","Verbindung",fsOptionen(W.verbindung,o.verbindung,"Alle Arten"))+
+        fsAuswahl("fs_min","Nutzen",["","30","50","70","85"].map(function(v){ return '<option value="'+v+'"'+(o.min===v?' selected':'')+'>'+(v?"ab "+v:"egal")+'</option>'; }).join(""))+
+        fsAuswahl("fs_sort","Sortierung",[["nutzen","nach Nutzen"],["name","nach Name"],["club","nach Club"]].map(function(s){ return '<option value="'+s[0]+'"'+(o.sort===s[0]?' selected':'')+'>'+s[1]+'</option>'; }).join(""))+
+      '</div>'+
+      '<label class="check fs-ap"><input type="checkbox" id="fs_ap"'+(o.ap?' checked':'')+'><span><b>Nur mit Ansprechpartner</b></span></label>'+
+    '</details>'+
+    '<div class="fs-zeile"><b id="fs_zahl"></b><span class="spacer"></span><button class="btn ghost klein" id="fs_reset">Filter zurücksetzen</button></div>'+
+    '<div class="knopfreihe" style="margin-bottom:12px"><button class="btn klein" id="fs_pdf">Treffer als PDF</button><button class="btn klein" id="fs_csv">Treffer als CSV</button></div>'+
+    '<div class="liste" id="fs_liste"></div><div class="fs-mehr" id="fs_mehr"></div>';
+}
+function trefferKarte(x,i){
+  var cl=x.clubs.map(function(c){ return c.name; }), arten=[];
+  x.e.forEach(function(y){ if(y.f.verbindung && arten.indexOf(y.f.verbindung)<0) arten.push(y.f.verbindung); });
+  var idee=x.e[0].f.kooperationsidee;
+  return '<button class="karte firma-treffer" data-fg="'+i+'"><span class="ft-text"><b>'+esc(x.name)+'</b>'+
+      '<small>'+esc([x.branche,x.ort].filter(Boolean).join(" · ")||"Branche unbekannt")+'</small>'+
+      '<small>'+esc((cl.length>3 ? cl.slice(0,3).join(", ")+" und "+(cl.length-3)+" weitere" : cl.join(", "))+(arten.length?" · "+arten.join(", "):""))+'</small>'+
+      (idee?'<small class="ft-idee">'+esc(idee)+'</small>':'')+
+      (x.ap?'<span class="tags"><span class="chip ok">Ansprechpartner</span></span>':'')+
+    '</span><span class="rechts"><span class="ft-n">'+(x.nutzen<0?'–':x.nutzen)+'</span><small>Nutzen</small></span></button>';
+}
+function trefferZeichnen(){
+  FT=firmenFiltern();
+  var o=S.fs, z=Math.min(o.zahl,FT.length), a=fsAktiv(), gefiltert=!!(a||o.q.trim());
+  $("fs_zahl").textContent=gefiltert ? tausend(FT.length)+" von "+tausend(FG.l.length)+" Firmen" : tausend(FG.l.length)+" Firmen";
+  $("fs_aktiv").textContent=a ? " · "+a+" aktiv" : "";
+  $("fs_reset").hidden=!gefiltert;
+  $("fs_pdf").disabled=$("fs_csv").disabled=!FT.length;
+  $("fs_liste").innerHTML=FT.length ? FT.slice(0,z).map(trefferKarte).join("") : '<div class="leer">Keine Treffer. Suchwort kürzen oder Filter lockern.</div>';
+  $("fs_mehr").innerHTML=FT.length>z ? '<button class="btn" id="fs_mehrBtn">Mehr laden</button><span class="hint">'+tausend(z)+' von '+tausend(FT.length)+' angezeigt</span>' : '';
+  if($("fs_mehrBtn")) $("fs_mehrBtn").onclick=function(){ o.zahl+=100; trefferZeichnen(); };
+}
+function firmenSucheVerdrahten(){
+  if(!$("fs_q")) return;
+  var o=S.fs;
+  $("fs_q").oninput=function(){ o.q=this.value; o.zahl=100; trefferZeichnen(); };
+  [["fs_club","club"],["fs_liga","liga"],["fs_branche","branche"],["fs_vb","verbindung"],["fs_min","min"],["fs_sort","sort"]].forEach(function(p){
+    var el=$(p[0]); if(el) el.onchange=function(){ o[p[1]]=el.value; o.zahl=100; trefferZeichnen(); };
+  });
+  $("fs_ap").onchange=function(){ o.ap=this.checked; o.zahl=100; trefferZeichnen(); };
+  $("fs_box").addEventListener("toggle",function(){ o.offen=this.open; });
+  $("fs_reset").onclick=function(){ S.fs=fsLeer(o); zeichnen(); };
+  $("fs_pdf").onclick=function(){ trefferPdf(FT); };
+  $("fs_csv").onclick=function(){ trefferCsv(FT); };
+  $("fs_liste").onclick=function(ev_){ var b=ev_.target.closest("[data-fg]"); if(b) firmaDetails(FT[Number(b.dataset.fg)]); };
+  trefferZeichnen();
+}
+/* Details einer Firma: alle Clubs mit Verbindung, Nutzen und Grund, Idee, Quellen, Ansprechpartner */
+function firmaDetails(x){
+  if(!x) return;
+  var web=linkUrl(x.website);
+  fenster(x.name,
+    '<dl class="kv eckdaten">'+
+      (x.branche?'<dt>Branche</dt><dd>'+esc(x.branche)+'</dd>':'')+
+      (x.ort||x.land?'<dt>Ort</dt><dd>'+esc([x.ort,x.land].filter(Boolean).join(", "))+'</dd>':'')+
+      (web?'<dt>Website</dt><dd><a href="'+esc(web)+'" target="_blank" rel="noopener">'+esc(web.replace(/^https?:\/\/(www\.)?/i,"").replace(/\/$/,""))+'</a></dd>':'')+
+      '<dt>Clubs</dt><dd>'+esc(x.clubs.map(function(c){ return c.name; }).join(", "))+'</dd>'+
+    '</dl>'+
+    '<div class="sec-label" style="margin:0">'+(x.e.length>1?"Verbindung zu "+x.e.length+" Clubs":"Verbindung")+'</div>'+
+    x.e.map(function(y){ return firmaKarte(y.f,y.c); }).join(""));
+  var box=document.querySelector("#fenster .panel-body");
+  kopierKnoepfe(box); profilVerdrahten(box);
+  alle("[data-zuclub]",function(b){ b.onclick=function(){ clubOeffnen(b.dataset.zuclub); }; },box);
+}
+
+/* Firmenkarte. imClub: Karte steht in den Details einer Firma, dann zeigt der Kopf den Club */
+function firmaKarte(f,imClub){
   var p=f.personId?pers(f.personId):null;
-  var q=(f.quellen||[]).filter(function(x){ return x.url; });
+  var q=(f.quellen||[]).filter(function(x){ return linkUrl(x.url); });
   var weg=p?(p.kontaktwege||[]).filter(function(k){ return k.wert; })[0]:null;
   return '<div class="kand">'+
-    '<div class="firma-kopf"><div class="wer"><b>'+esc(f.name)+'</b><small>'+esc([f.branche,f.ort].filter(Boolean).join(" · ")||"Branche unbekannt")+'</small></div>'+
+    '<div class="firma-kopf"><div class="wer"><b>'+esc(imClub?imClub.name:f.name)+'</b><small>'+
+      esc(imClub ? [imClub.liga,imClub.land].filter(Boolean).join(" · ") : ([f.branche,f.ort].filter(Boolean).join(" · ")||"Branche unbekannt"))+'</small></div>'+
       '<div class="gesamt">'+(f.nutzen===null||f.nutzen===undefined?'–':f.nutzen)+'<small>Nutzen</small></div></div>'+
     '<div class="tags">'+(f.verbindung?'<span class="chip akz">'+esc(f.verbindung)+'</span>':'<span class="chip warn">Verbindung unbekannt</span>')+'</div>'+
     (f.verbindungText?'<p class="warum">'+esc(f.verbindungText)+'</p>':'')+
@@ -1764,8 +1998,9 @@ function firmaKarte(f){
         (weg?kwZeile(weg):'<span class="chip warn" style="align-self:flex-start">kein Kontaktweg</span>')+
         '<div class="knopfreihe"><button class="btn klein" data-prof="'+esc(p.id)+'">Profil</button></div></div>'
       :'<p class="hint" style="margin:0">Kein Ansprechpartner belegt.</p>')+
-    (q.length?'<div class="quellen-zeile">Quellen: '+q.map(function(x,i){ return '<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.text||("Quelle "+(i+1)))+'</a>'; }).join(" · ")+'</div>'
+    (q.length?'<div class="quellen-zeile">Quellen: '+q.map(function(x,i){ return '<a href="'+esc(linkUrl(x.url))+'" target="_blank" rel="noopener">'+esc(x.text||("Quelle "+(i+1)))+'</a>'; }).join(" · ")+'</div>'
       :'<span class="chip warn" style="align-self:flex-start">Keine Quelle</span>')+
+    (imClub?'<div class="knopfreihe"><button class="btn klein" data-zuclub="'+esc(imClub.id)+'">Club öffnen</button></div>':'')+
   '</div>';
 }
 
@@ -1773,19 +2008,20 @@ function zeichneClub(c){
   var box=$("sicht-clubs"), fs=firmenVon(c.id), sp=spieleVon(c);
   var evs=D.events.filter(function(e){ return e.clubId===c.id; });
   var h='<button class="btn ghost klein" id="alleClubs" style="margin:-6px 0 6px -8px;display:inline-flex;align-items:center;gap:4px">'+
-      '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Alle Clubs</button>'+
+      '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>'+(S.clubTab==="firmen"?"Alle Firmen":"Alle Clubs")+'</button>'+
     '<h2 style="font-size:22px">'+esc(c.name)+'</h2>'+
     '<dl class="kv eckdaten" style="margin:10px 0 12px">'+
+      (c.liga?'<dt>Liga</dt><dd>'+esc(c.liga)+'</dd>':'')+
       (c.land?'<dt>Land</dt><dd>'+esc(c.land)+'</dd>':'')+
       (c.stadion?'<dt>Stadion</dt><dd>'+esc(c.stadion)+'</dd>':'')+
-      (sp.length?'<dt>Spiele</dt><dd>'+sp.map(function(s){ return esc(spielText(s))+(s.quelle?' <a href="'+esc(s.quelle)+'" target="_blank" rel="noopener">Quelle</a>':''); }).join("<br>")+'</dd>':'')+
+      (sp.length?'<dt>Spiele</dt><dd>'+sp.map(function(s){ var u=linkUrl(s.quelle); return esc(spielText(s))+(u?' <a href="'+esc(u)+'" target="_blank" rel="noopener">Quelle</a>':''); }).join("<br>")+'</dd>':'')+
       (evs.length?'<dt>Events</dt><dd>'+evs.map(function(e){ return '<a href="#" data-zuev="'+esc(e.id)+'">'+esc(e.name)+'</a>'; }).join("<br>")+'</dd>':'')+
       (c.stand?'<dt>Stand</dt><dd>'+esc(deDatum(c.stand))+'</dd>':'')+
     '</dl>'+
     '<div class="knopfreihe" style="margin-bottom:14px"><button class="btn primary" id="clubPdf">Liste als PDF</button><button class="btn" id="clubEvent">Event anlegen</button>'+
-      '<button class="btn" id="clubNeuImport">Datei importieren</button><button class="btn" id="clubNeuAuftrag">Recherche-Auftrag</button></div>'+
+      '<button class="btn" id="clubNeuImport">Dateien importieren</button><button class="btn" id="clubNeuAuftrag">Recherche-Auftrag</button></div>'+
     '<div class="sec-label">'+plural(fs.length,"Firma","Firmen")+', sortiert nach Nutzen</div>';
-  h+= fs.length ? '<div class="liste">'+fs.map(firmaKarte).join("")+'</div>' : '<div class="leer">Noch keine Firmen zu diesem Club.</div>';
+  h+= fs.length ? '<div class="liste">'+fs.map(function(f){ return firmaKarte(f); }).join("")+'</div>' : '<div class="leer">Noch keine Firmen zu diesem Club.</div>';
   h+='<div style="margin-top:18px"><button class="btn ghost klein" id="clubLoesch" style="color:var(--bad)">Club löschen</button></div>';
   box.innerHTML=h;
   kopierKnoepfe(box);
@@ -1810,25 +2046,40 @@ function zeichneClub(c){
 }
 
 function clubImportFenster(){
-  fenster("Club-Datei importieren",
-    '<p class="hint" style="margin:0">Datei aus der Recherche wählen oder den Inhalt einfügen. Firmen landen beim Club, Ansprechpartner zusätzlich im Netzwerk. Ein zweiter Import aktualisiert, statt zu verdoppeln.</p>'+
-    '<div class="field"><label for="ci_datei">Datei</label><input id="ci_datei" type="file" accept=".json,application/json"></div>'+
+  fenster("Club-Dateien importieren",
+    '<p class="hint" style="margin:0">Eine oder mehrere Dateien aus der Recherche wählen. Im Dateifenster mit gedrückter Befehlstaste mehrere anklicken oder mit Befehl+A alle im Ordner. Firmen landen beim Club, Ansprechpartner zusätzlich im Netzwerk. Ein zweiter Import aktualisiert, statt zu verdoppeln.</p>'+
+    '<div class="field"><label for="ci_datei">Dateien</label><input id="ci_datei" type="file" accept=".json,application/json" multiple></div>'+
+    '<div id="ci_erg" style="display:flex;flex-direction:column;gap:8px" hidden></div>'+
     '<div class="field"><label for="ci_text">Oder einfügen</label><textarea id="ci_text" style="min-height:160px" class="mono" placeholder="{&quot;club&quot;:&quot;…&quot;,&quot;firmen&quot;:[…]}"></textarea></div>'+
     '<p class="err" id="ci_err" hidden></p>',
     '<button class="btn primary" id="ciLos">Importieren</button>');
+  function summe(l,k){ return l.reduce(function(s,x){ return s+x[k]; },0); }
+  function zeigen(r){
+    var err=$("ci_err"), erg=$("ci_erg"); err.hidden=true;
+    if(r.ok.length===1 && !r.fehler.length && r.gesichert!==false){
+      var x=r.ok[0]; clubOeffnen(x.club.id);
+      toast(x.club.name+": "+x.neu+" Firmen neu, "+x.akt+" aktualisiert."+(x.doppelt?" "+x.doppelt+" doppelte zusammengeführt.":"")); return;
+    }
+    if(!r.ok.length && r.fehler.length===1){ var t=r.fehler[0].text; err.hidden=false; err.textContent=t.charAt(0).toUpperCase()+t.slice(1); return; }
+    var dop=summe(r.ok,"doppelt");
+    erg.innerHTML=
+      (r.ok.length?'<p class="okbox"><b>'+plural(r.ok.length,"Datei","Dateien")+' übernommen:</b> '+tausend(summe(r.ok,"neu"))+' Firmen neu, '+tausend(summe(r.ok,"akt"))+' aktualisiert'+(dop?', '+dop+' doppelte zusammengeführt':'')+'.</p>':'')+
+      (r.gesichert===false?'<p class="warnbox"><b>Speicher voll.</b> Die Daten sind nur bis zum Neuladen da. Bitte unter Einstellungen die Sicherung herunterladen.</p>':'')+
+      (r.fehler.length?'<p class="warnbox"><b>Nicht übernommen:</b><br>'+r.fehler.map(function(f){ return esc(f.datei)+": "+esc(f.text); }).join("<br>")+'</p>':'')+
+      (r.ok.length?'<p class="hint" style="margin:0">'+r.ok.map(function(x){ return esc(x.datei)+": "+esc(x.club.name)+", "+x.neu+" neu, "+x.akt+" aktualisiert"; }).join("<br>")+'</p>'+
+        '<div class="knopfreihe"><button class="btn primary" id="ciAlle">Alle Firmen ansehen</button></div>':'');
+    erg.hidden=false;
+    if($("ciAlle")) $("ciAlle").onclick=function(){ fensterZu(); S.sicht="clubs"; S.clubId=null; S.clubTab="firmen"; zeichnen(); };
+    $("ci_datei").value="";
+    zeichnen();
+  }
   $("ci_datei").onchange=function(){
-    var f=this.files[0]; if(!f) return; var r=new FileReader();
-    r.onload=function(){ $("ci_text").value=r.result; $("ciLos").click(); }; r.readAsText(f);
+    var dateien=Array.prototype.slice.call(this.files||[]); if(!dateien.length) return;
+    var texte=[], offen=dateien.length;
+    function fertig(){ if(--offen) return; zeigen(clubDateienUebernehmen(dateien.map(function(d,i){ return { name:d.name, text:texte[i] }; }))); }
+    dateien.forEach(function(d,i){ var r=new FileReader(); r.onload=function(){ texte[i]=r.result; fertig(); }; r.onerror=function(){ texte[i]=""; fertig(); }; r.readAsText(d); });
   };
-  $("ciLos").onclick=function(){
-    function fehler(t){ var f=$("ci_err"); f.hidden=false; f.textContent=t; }
-    var roh; try{ roh=JSON.parse($("ci_text").value); }catch(err){ fehler("Das ist keine gültige Datei. Bitte die Datei unverändert einfügen."); return; }
-    if(!roh||!Array.isArray(roh.firmen)){ fehler("Das ist keine Club-Datei. Personen-Dateien gehören in ein Event unter Kandidaten."); return; }
-    var r=clubUebernehmen(roh);
-    if(!r){ fehler("In der Datei fehlt der Name des Clubs."); return; }
-    clubOeffnen(r.club.id);
-    toast(r.club.name+": "+r.neu+" Firmen neu, "+r.akt+" aktualisiert.");
-  };
+  $("ciLos").onclick=function(){ zeigen(clubDateienUebernehmen([{ name:"Eingefügter Text", text:$("ci_text").value }])); };
 }
 
 function clubAuftrag(name){
@@ -1850,38 +2101,90 @@ function clubAuftrag(name){
   $("cZuImport").onclick=clubImportFenster;
 }
 
-/* Druckliste pro Club, damit jemand ohne App damit arbeiten kann (Muster einladerListe) */
-function clubListe(c){
-  var fs=firmenVon(c.id), sp=spieleVon(c);
-  function link(u,t){ return '<a href="'+esc(u)+'">'+esc(t||u)+'</a>'; }
-  var html='<!doctype html><html lang="de"><head><meta charset="utf-8"><title>'+esc(c.name)+' · Firmenliste</title><style>'+
-    'body{font:13.5px/1.45 -apple-system,system-ui,sans-serif;color:#141413;margin:24px}h1{font-size:20px;margin:0 0 4px}.k{color:#555;margin:0 0 4px}'+
-    '.f{border-top:1px solid #ccc;padding:12px 0;break-inside:avoid}.f>b{font-size:15px}.n{font-weight:700;font-variant-numeric:tabular-nums;float:right}.m{color:#555}'+
-    '.z{margin-top:4px}.h{border-left:3px solid #D25A00;padding-left:8px;margin-top:4px}.q{color:#555;font-size:12px;margin-top:4px}'+
-    'a{color:#0B5FA5;word-break:break-all}.box{display:inline-block;width:12px;height:12px;border:1px solid #555;margin-right:6px;vertical-align:-1px}</style></head><body>'+
-    '<h1>'+esc(c.name)+'</h1>'+
-    '<p class="k">'+esc([c.land,c.stadion,c.stand?"Stand "+deDatum(c.stand):""].filter(Boolean).join(" · "))+' · '+plural(fs.length,"Firma","Firmen")+', sortiert nach Nutzen (0 bis 100)</p>'+
-    (sp.length?'<p class="k">Spiele: '+sp.map(function(s){ return esc(spielText(s)); }).join("; ")+'</p>':'')+
-    '<p class="k">Jede Verbindung ist mit Quelle belegt. Kontaktdaten sind dienstlich. E-Mail erst nach einem ersten Telefonat.</p>'+
-    fs.map(function(f){
-      var p=f.personId?pers(f.personId):null;
-      var wege=p?(p.kontaktwege||[]).filter(function(k){ return k.wert; }).map(function(k){ return esc(k.art+(k.typ?" ("+k.typ+")":"")+": ")+(/^https?:/.test(k.wert)?link(k.wert):esc(k.wert)); }):[];
-      var prof=p?(p.profile||[]).map(function(x){ return esc(x.art||"Profil")+": "+link(x.url); }):[];
-      var hin=[]; if(p&&p.heilberuf) hin.push("Heilberuf: Einladung nie mit Vermittlung von Patienten verbinden, vorher rechtlich klären.");
-      if(p&&p.amtstraeger) hin.push("Amtsträger: Einladung kann melde- oder genehmigungspflichtig sein, vorher klären.");
-      return '<div class="f"><span class="box"></span><b>'+esc(f.name)+'</b><span class="n">'+(f.nutzen===null||f.nutzen===undefined?'–':f.nutzen)+'</span>'+
-        '<div class="m">'+esc([f.branche,f.ort].filter(Boolean).join(" · "))+'</div>'+
-        '<div class="z"><b>Verbindung:</b> '+esc([f.verbindung||"unbekannt",f.verbindungText].filter(Boolean).join(", "))+'</div>'+
-        (f.kooperationsidee?'<div class="z"><b>Idee:</b> '+esc(f.kooperationsidee)+'</div>':'')+
-        (f.nutzenGrund?'<div class="z m">'+esc(f.nutzenGrund)+'</div>':'')+
-        '<div class="z"><b>Ansprechpartner:</b> '+(p?esc([p.name,p.position].filter(Boolean).join(", "))+(wege.length?'<br>'+wege.join("<br>"):'<br><i>kein Kontaktweg</i>')+(prof.length?'<br>'+prof.join("<br>"):''):'<i>nicht belegt</i>')+'</div>'+
-        hin.map(function(t){ return '<div class="h">'+esc(t)+'</div>'; }).join("")+
-        ((f.quellen||[]).length?'<div class="q">Quellen: '+f.quellen.map(function(x){ return esc(x.text||"")+(x.url?" "+link(x.url):""); }).join("; ")+'</div>':'')+
-      '</div>';
-    }).join("")+'</body></html>';
+/* Drucklisten für Clubs und Treffer, damit jemand ohne App damit arbeiten kann (Muster einladerListe) */
+var DRUCK_CSS='body{font:13.5px/1.45 -apple-system,system-ui,sans-serif;color:#141413;margin:24px}h1{font-size:20px;margin:0 0 4px}.k{color:#555;margin:0 0 4px}'+
+  '.f{border-top:1px solid #ccc;padding:12px 0;break-inside:avoid}.f>b{font-size:15px}.n{font-weight:700;font-variant-numeric:tabular-nums;float:right}.m{color:#555}'+
+  '.z{margin-top:4px}.c{margin-top:8px;font-weight:700}.h{border-left:3px solid #D25A00;padding-left:8px;margin-top:4px}.q{color:#555;font-size:12px;margin-top:4px}'+
+  'a{color:#0B5FA5;word-break:break-all}.box{display:inline-block;width:12px;height:12px;border:1px solid #555;margin-right:6px;vertical-align:-1px}';
+var DRUCK_HINWEIS='<p class="k">Jede Verbindung ist mit Quelle belegt. Kontaktdaten sind dienstlich. E-Mail erst nach einem ersten Telefonat.</p>';
+function druckLink(u,t){ u=linkUrl(u); return u ? '<a href="'+esc(u)+'">'+esc(t||u)+'</a>' : esc(t||""); }
+function druckKopf(name,nutzen,teile){
+  return '<span class="box"></span><b>'+esc(name)+'</b><span class="n">'+(nutzen===null||nutzen===undefined||nutzen<0?'–':nutzen)+'</span>'+
+    '<div class="m">'+esc(teile.filter(Boolean).join(" · "))+'</div>';
+}
+function firmaDruck(f){
+  var p=f.personId?pers(f.personId):null;
+  var wege=p?(p.kontaktwege||[]).filter(function(k){ return k.wert; }).map(function(k){ return esc(k.art+(k.typ?" ("+k.typ+")":"")+": ")+(/^https?:/.test(k.wert)?druckLink(k.wert):esc(k.wert)); }):[];
+  var prof=p?(p.profile||[]).map(function(x){ return esc(x.art||"Profil")+": "+druckLink(x.url); }):[];
+  var hin=[]; if(p&&p.heilberuf) hin.push("Heilberuf: Einladung nie mit Vermittlung von Patienten verbinden, vorher rechtlich klären.");
+  if(p&&p.amtstraeger) hin.push("Amtsträger: Einladung kann melde- oder genehmigungspflichtig sein, vorher klären.");
+  return '<div class="z"><b>Verbindung:</b> '+esc([f.verbindung||"unbekannt",f.verbindungText].filter(Boolean).join(", "))+'</div>'+
+    (f.kooperationsidee?'<div class="z"><b>Idee:</b> '+esc(f.kooperationsidee)+'</div>':'')+
+    (f.nutzenGrund?'<div class="z m">'+esc(f.nutzenGrund)+'</div>':'')+
+    '<div class="z"><b>Ansprechpartner:</b> '+(p?esc([p.name,p.position].filter(Boolean).join(", "))+(wege.length?'<br>'+wege.join("<br>"):'<br><i>kein Kontaktweg</i>')+(prof.length?'<br>'+prof.join("<br>"):''):'<i>nicht belegt</i>')+'</div>'+
+    hin.map(function(t){ return '<div class="h">'+esc(t)+'</div>'; }).join("")+
+    ((f.quellen||[]).length?'<div class="q">Quellen: '+f.quellen.map(function(x){ return esc(x.text||"")+(x.url?" "+druckLink(x.url):""); }).join("; ")+'</div>':'');
+}
+function druckOeffnen(titel,koerper,datei){
+  var html='<!doctype html><html lang="de"><head><meta charset="utf-8"><title>'+esc(titel)+'</title><style>'+DRUCK_CSS+'</style></head><body>'+koerper+'</body></html>';
   var w=window.open("","_blank");
   if(w){ w.document.open(); w.document.write(html); w.document.close(); setTimeout(function(){ try{ w.focus(); w.print(); }catch(err){} },400); }
-  else herunterladen("firmenliste-"+ymd(new Date())+".html",html,"text/html");
+  else herunterladen(datei,html,"text/html");
+}
+function clubListe(c){
+  var fs=firmenVon(c.id), sp=spieleVon(c);
+  druckOeffnen(c.name+" · Firmenliste",
+    '<h1>'+esc(c.name)+'</h1>'+
+    '<p class="k">'+esc([c.liga,c.land,c.stadion,c.stand?"Stand "+deDatum(c.stand):""].filter(Boolean).join(" · "))+' · '+plural(fs.length,"Firma","Firmen")+', sortiert nach Nutzen (0 bis 100)</p>'+
+    (sp.length?'<p class="k">Spiele: '+sp.map(function(s){ return esc(spielText(s)); }).join("; ")+'</p>':'')+
+    DRUCK_HINWEIS+
+    fs.map(function(f){ return '<div class="f">'+druckKopf(f.name,f.nutzen,[f.branche,f.ort])+firmaDruck(f)+'</div>'; }).join(""),
+    "firmenliste-"+ymd(new Date())+".html");
+}
+/* Beschreibung der gesetzten Filter für Druck und Tabelle */
+function fsBeschreibung(){
+  var o=S.fs, W=FG.werte;
+  function t(l,v){ var x=(l||[]).filter(function(w){ return w.v===v; })[0]; return x?x.t:v; }
+  var c=o.club?club(o.club):null;
+  return [o.q.trim()?"Suche „"+o.q.trim()+"“":"", c?"Club "+c.name:"", o.liga?t(W.liga,o.liga):"", o.branche?"Branche "+t(W.branche,o.branche):"",
+    o.verbindung?t(W.verbindung,o.verbindung):"", o.min?"Nutzen ab "+o.min:"", o.ap?"nur mit Ansprechpartner":""].filter(Boolean).join(" · ");
+}
+var SORT_TEXT={ nutzen:"Nutzen", name:"Name", club:"Club" };
+function trefferPdf(l){
+  if(!l.length) return;
+  var b=fsBeschreibung();
+  druckOeffnen("Firmen · Treffer",
+    '<h1>Firmen aus allen Clubs</h1>'+
+    '<p class="k">'+esc(b||"Ohne Filter")+'</p>'+
+    '<p class="k">'+plural(l.length,"Firma","Firmen")+', sortiert nach '+SORT_TEXT[S.fs.club&&S.fs.sort==="club"?"nutzen":S.fs.sort]+'. Nutzen 0 bis 100. Stand '+deDatum(ymd(new Date()))+'</p>'+
+    DRUCK_HINWEIS+
+    l.map(function(x){
+      // Verbindungen, die zum Filter passen, zuerst
+      var es=x.e.filter(fsPasst).concat(x.e.filter(function(y){ return !fsPasst(y); }));
+      return '<div class="f">'+druckKopf(x.name,x.nutzen,[x.branche,x.ort,x.land])+
+        es.map(function(y){ return '<div class="c">'+esc(y.c.name+(y.c.liga?" ("+y.c.liga+")":"")+(x.e.length>1&&y.n>=0?" · Nutzen "+y.n:""))+'</div>'+firmaDruck(y.f); }).join("")+
+      '</div>';
+    }).join(""),
+    "firmen-"+ymd(new Date())+".html");
+}
+function trefferCsv(l){
+  if(!l.length) return;
+  function eins(arr){ var out=[]; arr.forEach(function(v){ if(v&&out.indexOf(v)<0) out.push(v); }); return out.join(" | "); }
+  var z=[["Firma","Nutzen","Branche","Ort","Land","Website","Clubs","Liga","Verbindung","Verbindung Details","Nutzen Grund","Kooperationsidee","Ansprechpartner","Position","Telefon","E-Mail","Quellen"]];
+  l.forEach(function(x){
+    var mehr=x.e.length>1;
+    function je(k){ return x.e.map(function(y){ var v=y.f[k]; return v ? (mehr?y.c.name+": ":"")+v : ""; }).filter(Boolean).join(" | "); }
+    var ps=[]; x.e.forEach(function(y){ if(y.p&&ps.indexOf(y.p)<0) ps.push(y.p); });
+    var qs=[]; x.e.forEach(function(y){ (y.f.quellen||[]).forEach(function(q){ if(q.url) qs.push(q.url); }); });
+    z.push([x.name, x.nutzen<0?"":x.nutzen, x.branche, x.ort, x.land, x.website,
+      eins(x.clubs.map(function(c){ return c.name; })), eins(x.clubs.map(function(c){ return c.liga; })),
+      je("verbindung"), je("verbindungText"), je("nutzenGrund"), je("kooperationsidee"),
+      eins(ps.map(function(p){ return p.name; })), eins(ps.map(function(p){ return p.position; })),
+      eins(ps.map(function(p){ return wegeVon(p,"Telefon"); })), eins(ps.map(function(p){ return wegeVon(p,"E-Mail"); })), eins(qs)]);
+  });
+  // Formeln aus fremden Texten nicht in Excel ausführen lassen
+  var csv="\ufeff"+z.map(function(r){ return r.map(function(v){ v=String(v==null?"":v); if(/^[=@]/.test(v)) v="'"+v; return '"'+v.replace(/"/g,'""')+'"'; }).join(";"); }).join("\r\n");
+  herunterladen("firmen-"+ymd(new Date())+".csv",csv,"text/csv");
 }
 
 /* ---------------- Einstellungen ---------------- */
