@@ -519,6 +519,11 @@ function abrufen(){
   if(NACHHOLEN) neuZeichnen();
   ABRUF_LAEUFT=true;
   standHolen().then(function(s){
+    var leerJetzt=Object.keys(s).every(function(t){ return /^0\//.test(s[t]); });
+    var hatteDaten=TABELLEN.some(function(t){ return D[t].length; });
+    if(leerJetzt && hatteDaten) return sb.auth.getUser().then(function(u){
+      if(u.data && u.data.user){ clearInterval(ABRUF_T); fensterZu(); nachAnmeldung(u.data.user); }
+    });
     var geaendert=Object.keys(s).filter(function(t){ return s[t]!==STAND[t]; });
     return Promise.all(geaendert.map(function(t){
       return tabelleHolen(t).then(function(rows){ return { t:t, rows:rows, sig:s[t] }; });
@@ -2592,7 +2597,7 @@ function zugangZeigen(box,email,pw){
     '<button class="btn klein" type="button" data-zkopie="1">Text kopieren</button></div>';
   alle("[data-zkopie]",function(b){ b.onclick=function(){ kopieren(zugangsText(email,pw)); }; },box);
 }
-function mitgliederZeichnen(){
+function mitgliederZeichnen(danach){
   var box=$("mitgliederBox"); if(!box) return;
   sb.from("mitglieder").select("id,email,name,rolle,freigegeben,angelegt").order("angelegt").then(function(r){
     if(r.error){ console.error("Mitglieder",r.error); box.innerHTML='<p class="err">Hat nicht geklappt.</p>'; return; }
@@ -2623,8 +2628,7 @@ function mitgliederZeichnen(){
       $("k_los").disabled=true;
       kontoAufruf({ aktion:"anlegen", name:name, email:mail, passwort:pw }).then(function(){
         toast("Konto angelegt.");
-        mitgliederZeichnen();
-        setTimeout(function(){ var e=$("k_ergebnis"); if(e) zugangZeigen(e,mail,pw); },600);
+        mitgliederZeichnen(function(){ var e=$("k_ergebnis"); if(e) zugangZeigen(e,mail,pw); });
       }).catch(function(e){ $("k_los").disabled=false; f.hidden=false; f.textContent=e&&e.text?e.text:"Hat nicht geklappt."; });
     };
     alle("[data-mpw]",function(b){ b.onclick=function(){
@@ -2642,6 +2646,7 @@ function mitgliederZeichnen(){
         mitgliederZeichnen();
       });
     }; },box);
+    if(danach) danach();
   });
 }
 /* Eigenes Passwort ändern, für alle Mitglieder */
