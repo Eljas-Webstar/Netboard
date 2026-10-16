@@ -2371,7 +2371,11 @@ function einstellungen(){
       '<p class="hint" style="margin:0 0 8px">Hier liegt noch der alte Stand aus der Zeit vor der Datenbank. Einmal übernehmen schreibt ihn in die Datenbank und zählt vorher und nachher. Der Browser-Stand bleibt liegen.</p>'+
       '<button class="btn klein" id="umzugBtn">Bestand aus diesem Browser übernehmen</button></div>':'')+
     (istAdmin()?'<hr class="sep"><div><div class="sec-label" style="margin-top:0">Mitglieder</div><div id="mitgliederBox"><p class="hint">Wird geladen …</p></div>'+
-      '<p class="hint" style="margin:6px 0 0">Neue Mitglieder bekommen einen Einladungslink vom Admin.</p></div>':'')+
+      '<p class="hint" style="margin:6px 0 0">Zugangsdaten gibst du selbst weiter. Neue Konten sind sofort freigegeben.</p></div>':'')+
+    '<hr class="sep"><div><div class="sec-label" style="margin-top:0">Mein Passwort</div>'+
+      '<div class="two"><div class="field"><label for="p_neu">Neues Passwort</label><input id="p_neu" type="password" autocomplete="new-password"></div>'+
+      '<div class="field"><label for="p_neu2">Noch einmal</label><input id="p_neu2" type="password" autocomplete="new-password"></div></div>'+
+      '<p class="err" id="p_err" hidden></p><button class="btn klein" type="button" id="p_los">Passwort ändern</button></div>'+
     '<hr class="sep">'+
     '<div><div class="sec-label" style="margin-top:0">Fassung</div><p class="hint mono" style="margin:0">'+esc(VERSION)+'</p></div>'+
     '<p class="hint" style="margin:0">Angemeldet als '+esc(ICH?ICH.email:"")+'</p><button class="btn" id="abmeldenBtn">Abmelden</button>');
@@ -2386,6 +2390,7 @@ function einstellungen(){
   if($("impBtn")) $("impBtn").onclick=function(){ $("impDatei").click(); };
   if($("umzugBtn")) $("umzugBtn").onclick=umzug;
   if(istAdmin()) mitgliederZeichnen();
+  $("p_los").onclick=passwortAendern;
   $("impDatei").onchange=function(){
     var f=this.files[0]; if(!f) return; var r=new FileReader();
     r.onload=function(){
@@ -2477,7 +2482,7 @@ function gate(art){
     f.onsubmit=function(ev_){ ev_.preventDefault(); anmelden(); };
     setTimeout(function(){ $("a_mail").focus(); },50);
   } else if(art==="vergessen"){
-    h+='</div><p style="margin:0">Schreib dem Admin. Du bekommst einen Link, mit dem du ein neues Passwort festlegst.</p>'+
+    h+='</div><p style="margin:0">Schreib dem Admin. Er setzt dir ein neues Passwort, das du danach unter Einstellungen änderst.</p>'+
       '<button class="btn" type="button" id="a_zurueck">Zur Anmeldung</button>';
     f.innerHTML=h; $("a_zurueck").onclick=function(){ gate("anmelden"); };
   } else if(art==="passwort"){
@@ -2561,19 +2566,74 @@ function abmelden(){
 }
 
 /* ---------------- Mitglieder (nur Admin) ----------------
-   Freigeben und Sperren. Ob das erlaubt ist, entscheidet die Datenbank (Regel plus Schutz-Trigger). */
+   Konto anlegen, neues Passwort setzen, freigeben und sperren. Anlegen und Passwort laufen über die
+   Server-Funktion "konto" (geheimer Schlüssel bleibt dort), Freigabe direkt über die Tabelle.
+   Ob etwas erlaubt ist, entscheiden Funktion und Datenbank, nicht diese Seite. */
+function startPasswort(){
+  var z="abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789", a=new Uint32Array(12), s="";
+  crypto.getRandomValues(a); for(var i=0;i<a.length;i++) s+=z.charAt(a[i]%z.length);
+  return s;
+}
+function kontoAufruf(daten){
+  return sb.functions.invoke("konto",{ body:daten }).then(function(r){
+    if(r.error){
+      var ctx=r.error.context;
+      return (ctx && ctx.json ? ctx.json().catch(function(){ return {}; }) : Promise.resolve({})).then(function(j){
+        console.error("konto",r.error,j); throw { text:(j&&j.fehler)||"Hat nicht geklappt." };
+      });
+    }
+    return r.data;
+  });
+}
+function zugangsText(email,pw){ return "Netboard: "+location.origin+location.pathname+"\nE-Mail: "+email+"\nPasswort: "+pw+"\nBitte nach dem ersten Anmelden unter Einstellungen ein eigenes Passwort setzen."; }
+function zugangZeigen(box,email,pw){
+  box.innerHTML='<div class="okbox" style="display:flex;flex-direction:column;gap:8px"><b>Zum Weitergeben</b>'+
+    '<div class="mono" style="white-space:pre-wrap;word-break:break-all;font-size:13px">'+esc(zugangsText(email,pw))+'</div>'+
+    '<button class="btn klein" type="button" data-zkopie="1">Text kopieren</button></div>';
+  alle("[data-zkopie]",function(b){ b.onclick=function(){ kopieren(zugangsText(email,pw)); }; },box);
+}
 function mitgliederZeichnen(){
   var box=$("mitgliederBox"); if(!box) return;
   sb.from("mitglieder").select("id,email,name,rolle,freigegeben,angelegt").order("angelegt").then(function(r){
     if(r.error){ console.error("Mitglieder",r.error); box.innerHTML='<p class="err">Hat nicht geklappt.</p>'; return; }
-    box.innerHTML=(r.data||[]).map(function(m){
-      var ich=ICH && m.id===ICH.id;
-      return '<div class="box" style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px">'+
-        '<div style="flex:1;min-width:0"><b>'+esc(m.name||m.email)+'</b>'+(m.rolle==="admin"?' <span class="chip">Admin</span>':'')+
-        '<div class="hint" style="word-break:break-all">'+esc(m.email)+' · '+(m.freigegeben?'freigegeben':'wartet auf Freigabe')+'</div></div>'+
-        (ich?'':'<button class="btn klein'+(m.freigegeben?' ghost':' primary')+'" data-mfrei="'+esc(m.id)+'" data-wert="'+(m.freigegeben?'0':'1')+'">'+(m.freigegeben?'Sperren':'Freigeben')+'</button>')+
-      '</div>';
-    }).join("") || '<p class="hint">Noch niemand.</p>';
+    box.innerHTML=
+      '<div class="box" style="display:flex;flex-direction:column;gap:10px;padding:12px;margin-bottom:10px">'+
+        '<b>Neues Konto</b>'+
+        '<div class="field"><label for="k_name">Name</label><input id="k_name" autocomplete="off"></div>'+
+        '<div class="field"><label for="k_mail">E-Mail</label><input id="k_mail" type="email" autocomplete="off" autocapitalize="none" spellcheck="false"></div>'+
+        '<div class="field"><label for="k_pw">Startpasswort</label><input id="k_pw" class="mono" autocomplete="off" spellcheck="false" value="'+esc(startPasswort())+'"></div>'+
+        '<p class="err" id="k_err" hidden></p>'+
+        '<button class="btn primary" type="button" id="k_los">Konto anlegen</button>'+
+        '<div id="k_ergebnis"></div>'+
+      '</div>'+
+      (r.data||[]).map(function(m){
+        var ich=ICH && m.id===ICH.id;
+        return '<div class="box" style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;margin-bottom:8px">'+
+          '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;min-width:0"><b>'+esc(m.name||m.email)+'</b>'+(m.rolle==="admin"?' <span class="chip">Admin</span>':'')+
+          '<div class="hint" style="word-break:break-all">'+esc(m.email)+' · '+(m.freigegeben?'freigegeben':'gesperrt')+'</div></div></div>'+
+          (ich?'':'<div class="knopfreihe"><button class="btn klein" type="button" data-mpw="'+esc(m.id)+'" data-mail="'+esc(m.email)+'">Neues Passwort</button>'+
+            '<button class="btn klein'+(m.freigegeben?' ghost':' primary')+'" type="button" data-mfrei="'+esc(m.id)+'" data-wert="'+(m.freigegeben?'0':'1')+'">'+(m.freigegeben?'Sperren':'Freigeben')+'</button></div>'+
+            '<div data-mpwbox="'+esc(m.id)+'"></div>')+
+        '</div>';
+      }).join("");
+    $("k_los").onclick=function(){
+      var name=$("k_name").value.trim(), mail=$("k_mail").value.trim().toLowerCase(), pw=$("k_pw").value.trim(), f=$("k_err");
+      f.hidden=true;
+      if(!name||!mail||pw.length<10){ f.hidden=false; f.textContent="Name, E-Mail und ein Passwort mit mindestens 10 Zeichen eintragen."; return; }
+      $("k_los").disabled=true;
+      kontoAufruf({ aktion:"anlegen", name:name, email:mail, passwort:pw }).then(function(){
+        toast("Konto angelegt.");
+        mitgliederZeichnen();
+        setTimeout(function(){ var e=$("k_ergebnis"); if(e) zugangZeigen(e,mail,pw); },600);
+      }).catch(function(e){ $("k_los").disabled=false; f.hidden=false; f.textContent=e&&e.text?e.text:"Hat nicht geklappt."; });
+    };
+    alle("[data-mpw]",function(b){ b.onclick=function(){
+      var pw=startPasswort(), ziel=box.querySelector('[data-mpwbox="'+b.dataset.mpw+'"]');
+      b.disabled=true;
+      kontoAufruf({ aktion:"passwort", id:b.dataset.mpw, passwort:pw }).then(function(){
+        toast("Neues Passwort gesetzt."); zugangZeigen(ziel,b.dataset.mail,pw);
+      }).catch(function(e){ b.disabled=false; toast(e&&e.text?e.text:"Hat nicht geklappt."); });
+    }; },box);
     alle("[data-mfrei]",function(b){ b.onclick=function(){
       b.disabled=true;
       sb.from("mitglieder").update({ freigegeben:b.dataset.wert==="1" }).eq("id",b.dataset.mfrei).then(function(r2){
@@ -2582,6 +2642,19 @@ function mitgliederZeichnen(){
         mitgliederZeichnen();
       });
     }; },box);
+  });
+}
+/* Eigenes Passwort ändern, für alle Mitglieder */
+function passwortAendern(){
+  var a=$("p_neu").value, b=$("p_neu2").value, f=$("p_err");
+  f.hidden=true;
+  if(a.length<10){ f.hidden=false; f.textContent="Mindestens 10 Zeichen."; return; }
+  if(a!==b){ f.hidden=false; f.textContent="Die beiden Passwörter sind nicht gleich."; return; }
+  $("p_los").disabled=true;
+  sb.auth.updateUser({ password:a }).then(function(r){
+    $("p_los").disabled=false;
+    if(r.error){ console.error("Passwort",r.error); f.hidden=false; f.textContent=/same|different/i.test(r.error.message||"")?"Das ist schon dein Passwort.":"Hat nicht geklappt."; return; }
+    $("p_neu").value=""; $("p_neu2").value=""; toast("Passwort geändert.");
   });
 }
 
