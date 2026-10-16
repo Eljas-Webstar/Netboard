@@ -11,6 +11,7 @@
 <title>Netboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" integrity="sha384-GFr3yTh5lJznCbZfpTtXnwboFsxqtTQoeTZCRHhE0579KrRmlCzen5AA8ohaB5ug" crossorigin="anonymous"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
 :root{
@@ -231,13 +232,7 @@ body.gesperrt header.kopf, body.gesperrt main, body.gesperrt .untenleiste{displa
 </head>
 <body class="gesperrt">
 <section class="anmeldung" id="anmeldung">
-  <form class="box" id="anmeldeForm" autocomplete="on">
-    <div><h1>Netboard</h1><p class="hint" style="margin:4px 0 0">Bitte anmelden.</p></div>
-    <div class="field"><label for="a_name">Benutzername</label><input id="a_name" name="username" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
-    <div class="field"><label for="a_pw">Passwort</label><input id="a_pw" name="password" type="password" autocomplete="current-password"></div>
-    <p class="err" id="a_err" hidden>Benutzername oder Passwort stimmt nicht.</p>
-    <button class="btn primary" type="submit">Anmelden</button>
-  </form>
+  <form class="box" id="anmeldeBox" autocomplete="on"></form>
 </section>
 <header class="kopf">
   <div class="kopf-in">
@@ -357,26 +352,192 @@ function herunterladen(name,inhalt,typ){
 }
 
 /* ---------------- Datenspeicher ----------------
-   Heute im Browser (localStorage), alles in einem Paket. Für mehrere Nutzer durch einen
-   Supabase-Speicher mit denselben zwei Funktionen ersetzen, der Rest merkt davon nichts.
-   Tabellen später: events, personen, einladungen, verbindungen, clubs, firmen. */
+   Alles liegt in Supabase. Jede Sammlung ist eine Tabelle mit id und daten (der Eintrag genau wie hier).
+   Gespeichert werden nur geänderte Einträge: Vergleich mit SNAP, dem zuletzt mit der Datenbank abgeglichenen Stand.
+   Änderungen anderer holt abrufen() alle 30 Sekunden: stand() liefert je Tabelle Anzahl und Prüfsumme,
+   nur geänderte Tabellen werden neu geladen und in die vorhandenen Objekte eingearbeitet.
+   localStorage "netboard_daten" ist der alte Browser-Stand, nur noch für den einmaligen Umzug. */
 var SCHLUESSEL="netboard_daten";
+var SB_URL="SB_URL_EINTRAGEN", SB_KEY="SB_KEY_EINTRAGEN";
+var sb=(window.supabase && window.supabase.createClient && SB_URL.indexOf("https://")===0)
+  ? window.supabase.createClient(SB_URL,SB_KEY,{ auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:false } }) : null;
+var TABELLEN=["events","personen","einladungen","verbindungen","clubs","firmen"];
+var ICH=null, SNAP={}, STAND={}, OFFEN=false, FEHLER=false, KETTE=Promise.resolve(), SYNC_T=null, ABRUF_T=null, ABRUF_LAEUFT=false, NACHHOLEN=false;
 function leer(){ return { events:[], personen:[], einladungen:[], verbindungen:[], clubs:[], firmen:[], gewichte:JSON.parse(JSON.stringify(GEWICHTE_STANDARD)) }; }
+function normal(d){
+  d=d||leer();
+  ["events","personen","einladungen","verbindungen","clubs","firmen"].forEach(function(k){ if(!Array.isArray(d[k])) d[k]=[]; });
+  if(!d.gewichte) d.gewichte=JSON.parse(JSON.stringify(GEWICHTE_STANDARD));
+  if(d.gewichte.nutzen===undefined) d.gewichte.nutzen=GEWICHTE_STANDARD.nutzen;
+  return d;
+}
 var speicher={
-  laden:function(){
-    var d=null; try{ d=JSON.parse(LS.get(SCHLUESSEL)||"null"); }catch(e){}
-    d=d||leer();
-    ["events","personen","einladungen","verbindungen","clubs","firmen"].forEach(function(k){ if(!Array.isArray(d[k])) d[k]=[]; });
-    if(!d.gewichte) d.gewichte=JSON.parse(JSON.stringify(GEWICHTE_STANDARD));
-    if(d.gewichte.nutzen===undefined) d.gewichte.nutzen=GEWICHTE_STANDARD.nutzen;
-    return d;
-  },
-  sichern:function(d){ return LS.set(SCHLUESSEL,kompakt(JSON.stringify(d))); }
+  laden:function(){ return D; },
+  sichern:function(){ if(ICH) speichernPlanen(); return true; }
 };
-/* Zeichen über 255 (z. B. „“ oder griechische Namen) als \uXXXX speichern. JSON.parse liest sie unverändert
-   zurück, und Safari zählt den Speicher dann mit einem statt zwei Byte pro Zeichen (Grenze dort 5 MB). */
-function kompakt(json){ return json.replace(/[\u0100-\uffff]/g,function(c){ return "\\u"+("000"+c.charCodeAt(0).toString(16)).slice(-4); }); }
-var D=speicher.laden();
+function istAdmin(){ return !!(ICH && ICH.rolle==="admin"); }
+
+/* Eine ganze Tabelle holen, in Seiten zu 1.000 (mehr gibt Supabase auf einmal nicht heraus) */
+function tabelleHolen(t,spalten){
+  var alle_=[];
+  function seite(von){
+    return sb.from(t).select(spalten||"id,daten").order("nr").range(von,von+999).then(function(r){
+      if(r.error) throw r.error;
+      alle_=alle_.concat(r.data||[]);
+      return (r.data||[]).length===1000 ? seite(von+1000) : alle_;
+    });
+  }
+  return seite(0);
+}
+function standHolen(){
+  return sb.rpc("stand").then(function(r){
+    if(r.error) throw r.error;
+    var s={}; (r.data||[]).forEach(function(x){ s[x.tabelle]=x.anzahl+"/"+x.sig; }); return s;
+  });
+}
+function allesLaden(){
+  var st;
+  return standHolen().then(function(s){ st=s;
+    return Promise.all(TABELLEN.concat(["einstellungen"]).map(function(t){ return tabelleHolen(t); }));
+  }).then(function(l){
+    var d=leer(); SNAP={};
+    TABELLEN.forEach(function(t,i){ SNAP[t]={}; d[t]=l[i].map(function(r){ return r.daten; }); });
+    var g=l[TABELLEN.length].filter(function(r){ return r.id==="gewichte"; })[0];
+    if(g) d.gewichte=g.daten;
+    D=normal(d);
+    TABELLEN.forEach(function(t){ D[t].forEach(function(o){ SNAP[t][o.id]=JSON.stringify(o); }); });
+    SNAP.gewichte=g ? JSON.stringify(D.gewichte) : null;
+    STAND=st;
+  });
+}
+
+/* Was ist seit dem letzten Abgleich hier anders? */
+function aenderungen(){
+  var a={ up:{}, weg:{}, n:0, g:null };
+  TABELLEN.forEach(function(t){
+    var snap=SNAP[t]||(SNAP[t]={}), da={}, up={};
+    D[t].forEach(function(o){
+      if(!o||!o.id) return;
+      da[o.id]=1;
+      var s=JSON.stringify(o);
+      if(snap[o.id]!==s) up[o.id]={ id:o.id, daten:JSON.parse(s), s:s };
+    });
+    a.up[t]=Object.keys(up).map(function(k){ return up[k]; });
+    a.weg[t]=Object.keys(snap).filter(function(id){ return !da[id]; });
+    a.n+=a.up[t].length+a.weg[t].length;
+  });
+  var g=JSON.stringify(D.gewichte);
+  if(g!==SNAP.gewichte){ a.g=g; a.n++; }
+  return a;
+}
+function senden(){
+  var a=aenderungen(), schritte=[];
+  if(!a.n) return Promise.resolve(0);
+  TABELLEN.forEach(function(t){
+    for(var i=0;i<a.up[t].length;i+=400) (function(teil){
+      schritte.push(function(){
+        return sb.from(t).upsert(teil.map(function(x){ return { id:x.id, daten:x.daten }; })).then(function(r){
+          if(r.error) throw r.error;
+          teil.forEach(function(x){ SNAP[t][x.id]=x.s; });
+        });
+      });
+    })(a.up[t].slice(i,i+400));
+    for(var j=0;j<a.weg[t].length;j+=100) (function(teil){
+      schritte.push(function(){
+        return sb.from(t).delete().in("id",teil).then(function(r){
+          if(r.error) throw r.error;
+          teil.forEach(function(id){ delete SNAP[t][id]; });
+        });
+      });
+    })(a.weg[t].slice(j,j+100));
+  });
+  if(a.g) schritte.push(function(){
+    return sb.from("einstellungen").upsert({ id:"gewichte", daten:JSON.parse(a.g) }).then(function(r){
+      if(r.error) throw r.error; SNAP.gewichte=a.g;
+    });
+  });
+  return schritte.reduce(function(p,f){ return p.then(f); },Promise.resolve()).then(function(){ return a.n; });
+}
+/* Kurz sammeln, dann der Reihe nach senden. Klappt es nicht, alle 15 Sekunden noch einmal. */
+function speichernPlanen(warte){
+  OFFEN=true; clearTimeout(SYNC_T);
+  SYNC_T=setTimeout(function(){
+    KETTE=KETTE.then(senden).then(function(){
+      if(FEHLER) toast("Wieder verbunden. Alles gespeichert.");
+      FEHLER=false;
+      OFFEN=aenderungen().n>0;
+      if(OFFEN) speichernPlanen();
+    }).catch(function(e){
+      console.error("Speichern hat nicht geklappt",e);
+      if(!FEHLER) toast("Nicht gespeichert. Die App versucht es gleich noch einmal.");
+      FEHLER=true;
+      if(ICH) speichernPlanen(15000);
+    });
+  },warte||300);
+}
+
+/* Änderungen anderer einarbeiten. Objekte werden an Ort und Stelle ersetzt, damit offene Fenster
+   ihre Verweise behalten. Was hier geändert und noch nicht gespeichert ist, bleibt wie hier. */
+function kanon(o){
+  if(Array.isArray(o)) return "["+o.map(function(x){ return x===undefined?"null":kanon(x); }).join(",")+"]";
+  if(o && typeof o==="object") return "{"+Object.keys(o).filter(function(k){ return o[k]!==undefined; }).sort()
+    .map(function(k){ return JSON.stringify(k)+":"+kanon(o[k]); }).join(",")+"}";
+  return JSON.stringify(o);
+}
+function ersetzen(o,n){ Object.keys(o).forEach(function(k){ delete o[k]; }); Object.assign(o,n); }
+function einarbeiten(t,rows){
+  if(t==="einstellungen"){
+    var g=rows.filter(function(r){ return r.id==="gewichte"; })[0];
+    if(!g || JSON.stringify(D.gewichte)!==SNAP.gewichte) return false;
+    var anders=kanon(g.daten)!==kanon(D.gewichte);
+    if(anders) ersetzen(D.gewichte,g.daten);
+    SNAP.gewichte=JSON.stringify(D.gewichte);
+    return anders;
+  }
+  var snap=SNAP[t]||(SNAP[t]={}), lokal={}, fern={}, neu=false;
+  D[t].forEach(function(o){ if(o&&o.id) lokal[o.id]=o; });
+  rows.forEach(function(r){
+    fern[r.id]=1;
+    var o=lokal[r.id];
+    if(o){
+      if(JSON.stringify(o)!==snap[r.id]) return;
+      if(kanon(o)!==kanon(r.daten)){ ersetzen(o,r.daten); neu=true; }
+      snap[r.id]=JSON.stringify(o);
+    } else if(snap[r.id]===undefined){
+      D[t].push(r.daten); snap[r.id]=JSON.stringify(r.daten); neu=true;
+    }
+  });
+  for(var i=D[t].length-1;i>=0;i--){
+    var o=D[t][i];
+    if(!o||!o.id||fern[o.id]) continue;
+    if(snap[o.id]!==undefined && JSON.stringify(o)===snap[o.id]){ D[t].splice(i,1); delete snap[o.id]; neu=true; }
+  }
+  return neu;
+}
+function abrufen(){
+  if(!ICH || document.hidden || ABRUF_LAEUFT) return;
+  if(NACHHOLEN) neuZeichnen();
+  ABRUF_LAEUFT=true;
+  standHolen().then(function(s){
+    var geaendert=Object.keys(s).filter(function(t){ return s[t]!==STAND[t]; });
+    return Promise.all(geaendert.map(function(t){
+      return tabelleHolen(t).then(function(rows){ return { t:t, rows:rows, sig:s[t] }; });
+    })).then(function(l){
+      var neu=false;
+      l.forEach(function(x){ if(einarbeiten(x.t,x.rows)) neu=true; STAND[x.t]=x.sig; });
+      if(neu) neuZeichnen();
+    });
+  }).catch(function(e){ console.error("Abruf hat nicht geklappt",e); })
+    .then(function(){ ABRUF_LAEUFT=false; });
+}
+/* Nicht neu zeichnen, solange ein Fenster offen ist oder jemand tippt. Dann beim nächsten Mal. */
+function neuZeichnen(){
+  var a=document.activeElement;
+  if($("fenster").innerHTML || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))){ NACHHOLEN=true; return; }
+  NACHHOLEN=false;
+  var y=window.scrollY; zeichnen(); window.scrollTo(0,y);
+}
+var D=leer();
 var S={ sicht:"start", eventId:null, clubId:null, clubTab:"clubs", fs:fsLeer(), tab:"kandidaten", filter:"vorschlaege", suche:"", letzteSicht:null };
 function sichern(){ speicher.sichern(D); zeichnen(); }
 
@@ -518,7 +679,7 @@ function fenster(titel,inhalt,fuss){
   $("scrim").onclick=fensterZu;
   $("fensterZu").onclick=fensterZu;
 }
-function fensterZu(){ $("fenster").innerHTML=""; seiteFreigeben(); }
+function fensterZu(){ $("fenster").innerHTML=""; seiteFreigeben(); if(NACHHOLEN) setTimeout(neuZeichnen,0); }
 function alle(sel,f,box){ Array.prototype.forEach.call((box||document).querySelectorAll(sel),f); }
 
 /* ---------------- Ansichten ---------------- */
@@ -574,13 +735,12 @@ function zeichneStart(){
   var box=$("sicht-start");
   var e=naechstesEvent();
   var h='<div class="hallo"><h2>Netboard</h2><p>Die richtigen Gäste für jeden Netzwerkabend, mit Begründung.</p></div>';
-  if(OHNE_SPEICHER) h+='<p class="warnbox" style="margin-bottom:12px">Vorschau ohne Speichern. Änderungen gehen beim Neuladen verloren.</p>';
   if(!D.events.length){
     h+='<div class="leer">Noch kein Event angelegt. Über <b>+ Event</b> unten legst du das erste an.'+
-       '<div class="knopfreihe" style="justify-content:center;margin-top:12px"><button class="btn" id="beispielBtn">Beispiel ansehen</button></div></div>';
+       (istAdmin()?'<div class="knopfreihe" style="justify-content:center;margin-top:12px"><button class="btn" id="beispielBtn">Beispiel ansehen</button></div>':'')+'</div>';
     h+=pflegeBlock();
     box.innerHTML=h;
-    $("beispielBtn").onclick=beispielLaden;
+    if($("beispielBtn")) $("beispielBtn").onclick=beispielLaden;
     profilVerdrahten(box);
     return;
   }
@@ -2202,14 +2362,19 @@ function einstellungen(){
       '<div class="modus" id="hilfeBar"><button data-h="an">An</button><button data-h="aus">Aus</button></div></div>'+
     '<hr class="sep">'+
     '<div><div class="sec-label" style="margin-top:0">Daten</div>'+
-      '<p class="hint" style="margin:0 0 8px">'+plural(D.events.length,"Event","Events")+' · '+plural(D.personen.length,"Person","Personen")+' · '+plural(D.verbindungen.length,"Verbindung","Verbindungen")+' · '+plural(D.clubs.length,"Club","Clubs")+'. Liegt nur in diesem Browser.</p>'+
-      '<div class="knopfreihe"><button class="btn klein" id="expBtn">Sicherung herunterladen</button><button class="btn klein" id="impBtn">Sicherung einspielen</button>'+
-      '<button class="btn klein" id="bspBtn">Beispiel laden</button></div>'+
+      '<p class="hint" style="margin:0 0 8px">'+plural(D.events.length,"Event","Events")+' · '+plural(D.personen.length,"Person","Personen")+' · '+plural(D.verbindungen.length,"Verbindung","Verbindungen")+' · '+plural(D.clubs.length,"Club","Clubs")+' · '+plural(D.firmen.length,"Firma","Firmen")+'. Liegt in der Datenbank, alle Mitglieder sehen denselben Stand.</p>'+
+      '<div class="knopfreihe"><button class="btn klein" id="expBtn">Sicherung herunterladen</button>'+
+      (istAdmin()?'<button class="btn klein" id="impBtn">Sicherung einspielen</button><button class="btn klein" id="bspBtn">Beispiel laden</button>':'')+'</div>'+
       '<input type="file" id="impDatei" accept=".json,application/json" hidden>'+
-      '<div id="allesBox" style="margin-top:10px"><button class="btn ghost klein" id="allesBtn" style="color:var(--bad)">Alle Daten löschen</button></div></div>'+
+      (istAdmin()?'<div id="allesBox" style="margin-top:10px"><button class="btn ghost klein" id="allesBtn" style="color:var(--bad)">Alle Daten löschen</button></div>':'')+'</div>'+
+    (istAdmin()&&browserBestand()?'<hr class="sep"><div><div class="sec-label" style="margin-top:0">Bestand aus diesem Browser</div>'+
+      '<p class="hint" style="margin:0 0 8px">Hier liegt noch der alte Stand aus der Zeit vor der Datenbank. Einmal übernehmen schreibt ihn in die Datenbank und zählt vorher und nachher. Der Browser-Stand bleibt liegen.</p>'+
+      '<button class="btn klein" id="umzugBtn">Bestand aus diesem Browser übernehmen</button></div>':'')+
+    (istAdmin()?'<hr class="sep"><div><div class="sec-label" style="margin-top:0">Mitglieder</div><div id="mitgliederBox"><p class="hint">Wird geladen …</p></div>'+
+      '<p class="hint" style="margin:6px 0 0">Neue Mitglieder bekommen einen Einladungslink vom Admin.</p></div>':'')+
     '<hr class="sep">'+
     '<div><div class="sec-label" style="margin-top:0">Fassung</div><p class="hint mono" style="margin:0">'+esc(VERSION)+'</p></div>'+
-    '<button class="btn" id="abmeldenBtn">Abmelden</button>');
+    '<p class="hint" style="margin:0">Angemeldet als '+esc(ICH?ICH.email:"")+'</p><button class="btn" id="abmeldenBtn">Abmelden</button>');
   function knoepfe(){
     alle("#themaBar button",function(b){ b.setAttribute("aria-pressed",String(b.dataset.t===thema())); b.onclick=function(){ LS.set("netboard_thema",b.dataset.t); themaAnwenden(); knoepfe(); }; });
     alle("#hilfeBar button",function(b){ b.setAttribute("aria-pressed",String(b.dataset.h===hilfe())); b.onclick=function(){ LS.set("netboard_hilfe",b.dataset.h); hilfeAnwenden(); knoepfe(); }; });
@@ -2218,17 +2383,19 @@ function einstellungen(){
   $("gSpeichern").onclick=function(){ TEILE.forEach(function(t){ D.gewichte[t.k]=Math.max(0,Number($("g_"+t.k).value)||0); }); sichern(); einstellungen(); toast("Gewichte übernommen."); };
   $("gStandard").onclick=function(){ D.gewichte=JSON.parse(JSON.stringify(GEWICHTE_STANDARD)); sichern(); einstellungen(); };
   $("expBtn").onclick=function(){ herunterladen("netboard-sicherung-"+ymd(new Date())+".json",JSON.stringify(D,null,2)); };
-  $("impBtn").onclick=function(){ $("impDatei").click(); };
+  if($("impBtn")) $("impBtn").onclick=function(){ $("impDatei").click(); };
+  if($("umzugBtn")) $("umzugBtn").onclick=umzug;
+  if(istAdmin()) mitgliederZeichnen();
   $("impDatei").onchange=function(){
     var f=this.files[0]; if(!f) return; var r=new FileReader();
     r.onload=function(){
-      try{ var d=JSON.parse(r.result); if(!d.events||!d.personen) throw 0; D=d; speicher.sichern(D); D=speicher.laden(); fensterZu(); S.sicht="start"; zeichnen(); toast("Sicherung eingespielt."); }
+      try{ var d=JSON.parse(r.result); if(!d.events||!d.personen) throw 0; D=normal(d); speicher.sichern(D); fensterZu(); S.sicht="start"; zeichnen(); toast("Sicherung eingespielt."); }
       catch(e){ toast("Das ist keine Sicherung aus dem Netboard."); }
     }; r.readAsText(f);
   };
-  $("bspBtn").onclick=beispielLaden;
+  if($("bspBtn")) $("bspBtn").onclick=beispielLaden;
   $("abmeldenBtn").onclick=abmelden;
-  $("allesBtn").onclick=function(){
+  if($("allesBtn")) $("allesBtn").onclick=function(){
     $("allesBox").innerHTML='<div class="bestaetigen"><p style="margin:0">Wirklich <b>alle</b> Events, Personen, Verbindungen und Clubs löschen?</p>'+
       '<div class="reihe"><button class="btn danger" id="jaBtn">Alles löschen</button><button class="btn" id="neinBtn">Abbrechen</button></div></div>';
     $("neinBtn").onclick=einstellungen;
@@ -2285,46 +2452,196 @@ function beispielLaden(){
 }
 
 /* ---------------- Anmeldung ----------------
-   Sichtschutz für den Entwurf: Im Code steht nur ein Prüfwert (SHA-256), nicht das Passwort.
-   Echte Sicherheit gibt es erst mit Supabase, weil der Code öffentlich ist und die Prüfung im Browser läuft. */
-var ZUGANG="9c5700393db8310d851817108ddaf685c6ac944c02ed5d4a7fa74e83e35bee81";
-function sha256(text){
-  function r(n,x){ return (x>>>n)|(x<<(32-n)); }
-  var K=[],H=[],i,j,p=2;
-  for(var n=0;n<64;p++){ var prim=true; for(j=2;j*j<=p;j++) if(p%j===0){ prim=false; break; }
-    if(prim){ if(n<8) H[n]=(Math.pow(p,1/2)*4294967296)|0; K[n++]=(Math.pow(p,1/3)*4294967296)|0; } }
-  var b=unescape(encodeURIComponent(text)), w=[], len=b.length*8;
-  for(i=0;i<b.length;i++) w[i>>2]|=b.charCodeAt(i)<<((3-i)%4*8);
-  w[len>>5]|=0x80<<(24-len%32); w[((len+64>>9)<<4)+15]=len;
-  for(j=0;j<w.length;j+=16){
-    var a=H.slice(0), W=[];
-    for(i=0;i<64;i++){
-      if(i<16) W[i]=w[i+j]|0;
-      else { var s0=r(7,W[i-15])^r(18,W[i-15])^(W[i-15]>>>3), s1=r(17,W[i-2])^r(19,W[i-2])^(W[i-2]>>>10); W[i]=(W[i-16]+s0+W[i-7]+s1)|0; }
-      var t1=a[7]+(r(6,a[4])^r(11,a[4])^r(25,a[4]))+((a[4]&a[5])^(~a[4]&a[6]))+K[i]+W[i];
-      var t2=(r(2,a[0])^r(13,a[0])^r(22,a[0]))+((a[0]&a[1])^(a[0]&a[2])^(a[1]&a[2]));
-      a=[(t1+t2)|0].concat(a); a[4]=(a[4]+t1)|0; a.pop();
-    }
-    for(i=0;i<8;i++) H[i]=(H[i]+a[i])|0;
-  }
-  return H.map(function(x){ return ("00000000"+(x>>>0).toString(16)).slice(-8); }).join("");
-}
-function angemeldet(){ return LS.get("netboard_zugang")===ZUGANG || S.sitzung===true; }
-function anmeldungZeigen(){
+   Echte Anmeldung über Supabase mit E-Mail und Passwort. Konten gibt es nur über Einladungslinks vom Admin
+   (Registrieren ist in Supabase abgeschaltet). Der Link sieht so aus: Adresse der App plus #einladung=... oder
+   #passwort=... Der Schlüssel im Link wird erst beim Absenden eingelöst, damit Linkvorschauen ihn nicht verbrauchen.
+   Wer angemeldet, aber nicht freigegeben ist, sieht keine Daten. Das prüft die Datenbank, nicht diese Seite. */
+var LINK=null, LINK_EINGELOEST=false, WARTE_T=null;
+(function(){
+  var m=location.hash.match(/^#(einladung|passwort)=([A-Za-z0-9_-]+)$/);
+  if(m){ LINK={ art:m[1]==="einladung"?"invite":"recovery", token:m[2] }; history.replaceState(null,"",location.pathname+location.search); }
+})();
+function gate(art){
   document.body.classList.add("gesperrt"); $("anmeldung").hidden=false;
-  setTimeout(function(){ $("a_name").focus(); },50);
-  $("anmeldeForm").onsubmit=function(ev_){
-    ev_.preventDefault();
-    var h=sha256(norm($("a_name").value)+":"+$("a_pw").value);
-    if(h!==ZUGANG){ $("a_err").hidden=false; $("a_pw").value=""; $("a_pw").focus(); return; }
-    LS.set("netboard_zugang",ZUGANG); S.sitzung=true;
-    document.body.classList.remove("gesperrt"); $("anmeldung").hidden=true; $("a_pw").value="";
-    zeichnen();
-  };
+  var f=$("anmeldeBox"), h='<div><h1>Netboard</h1>';
+  f.onsubmit=function(ev_){ ev_.preventDefault(); };
+  if(art==="anmelden"){
+    h+='<p class="hint" style="margin:4px 0 0">Bitte anmelden.</p></div>'+
+      '<div class="field"><label for="a_mail">E-Mail</label><input id="a_mail" name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false"></div>'+
+      '<div class="field"><label for="a_pw">Passwort</label><input id="a_pw" name="password" type="password" autocomplete="current-password"></div>'+
+      '<p class="err" id="a_err" hidden></p>'+
+      '<button class="btn primary" type="submit" id="a_los">Anmelden</button>'+
+      '<button class="btn ghost" type="button" id="a_vergessen">Passwort vergessen?</button>';
+    f.innerHTML=h;
+    $("a_vergessen").onclick=function(){ gate("vergessen"); };
+    f.onsubmit=function(ev_){ ev_.preventDefault(); anmelden(); };
+    setTimeout(function(){ $("a_mail").focus(); },50);
+  } else if(art==="vergessen"){
+    h+='</div><p style="margin:0">Schreib dem Admin. Du bekommst einen Link, mit dem du ein neues Passwort festlegst.</p>'+
+      '<button class="btn" type="button" id="a_zurueck">Zur Anmeldung</button>';
+    f.innerHTML=h; $("a_zurueck").onclick=function(){ gate("anmelden"); };
+  } else if(art==="passwort"){
+    var neu=LINK && LINK.art==="invite";
+    h+='<p class="hint" style="margin:4px 0 0">'+(neu?'Willkommen. Lege dein Passwort fest, dann bist du drin.':'Lege ein neues Passwort fest.')+'</p></div>'+
+      '<div class="field"><label for="a_neu">Neues Passwort</label><input id="a_neu" type="password" autocomplete="new-password"></div>'+
+      '<div class="field"><label for="a_neu2">Noch einmal</label><input id="a_neu2" type="password" autocomplete="new-password"></div>'+
+      '<p class="hint" style="margin:0">Mindestens 10 Zeichen.</p>'+
+      '<p class="err" id="a_err" hidden></p>'+
+      '<button class="btn primary" type="submit" id="a_los">Passwort speichern</button>';
+    f.innerHTML=h;
+    f.onsubmit=function(ev_){ ev_.preventDefault(); passwortSetzen(); };
+    setTimeout(function(){ $("a_neu").focus(); },50);
+  } else if(art==="warten"){
+    h+='</div><p class="infobox">Dein Zugang ist angelegt und wartet auf die Freigabe durch den Admin. Danach geht es hier von allein weiter.</p>'+
+      '<button class="btn" type="button" id="a_ab">Abmelden</button>';
+    f.innerHTML=h; $("a_ab").onclick=abmelden;
+  } else if(art==="fehler"){
+    h+='</div><p class="warnbox">Die Verbindung zur Datenbank klappt gerade nicht. Bitte später noch einmal laden.</p>'+
+      '<button class="btn" type="button" id="a_neuladen">Neu laden</button>';
+    f.innerHTML=h; $("a_neuladen").onclick=function(){ location.reload(); };
+  } else {
+    f.innerHTML=h+'<p class="hint" style="margin:4px 0 0">Wird geladen …</p></div>';
+  }
+}
+function gateFehler(t){ var e=$("a_err"); if(e){ e.hidden=false; e.textContent=t; } var b=$("a_los"); if(b) b.disabled=false; }
+function anmelden(){
+  var mail=$("a_mail").value.trim(), pw=$("a_pw").value;
+  if(!mail||!pw) return gateFehler("E-Mail und Passwort eingeben.");
+  $("a_los").disabled=true;
+  sb.auth.signInWithPassword({ email:mail, password:pw }).then(function(r){
+    if(r.error){
+      console.error("Anmeldung",r.error);
+      return gateFehler(/invalid/i.test(r.error.message||"") ? "E-Mail oder Passwort stimmt nicht." : "Hat nicht geklappt. Bitte gleich noch einmal.");
+    }
+    nachAnmeldung(r.data.user);
+  }).catch(function(e){ console.error("Anmeldung",e); gateFehler("Hat nicht geklappt. Bitte gleich noch einmal."); });
+}
+function passwortSetzen(){
+  var a=$("a_neu").value, b=$("a_neu2").value;
+  if(a.length<10) return gateFehler("Das Passwort braucht mindestens 10 Zeichen.");
+  if(a!==b) return gateFehler("Die beiden Passwörter sind nicht gleich.");
+  $("a_los").disabled=true;
+  var schritt=LINK_EINGELOEST ? Promise.resolve({}) : sb.auth.verifyOtp({ token_hash:LINK.token, type:LINK.art });
+  schritt.then(function(r){
+    if(r.error){ console.error("Link",r.error); throw { text:"Der Link gilt nicht mehr. Bitte beim Admin einen neuen anfordern." }; }
+    LINK_EINGELOEST=true;
+    return sb.auth.updateUser({ password:a });
+  }).then(function(r){
+    if(r.error){ console.error("Passwort",r.error); throw { text:/weak|short|least/i.test(r.error.message||"") ? "Das Passwort ist zu schwach. Bitte ein längeres nehmen." : "Hat nicht geklappt. Bitte gleich noch einmal." }; }
+    LINK=null; LINK_EINGELOEST=false;
+    toast("Passwort gespeichert.");
+    nachAnmeldung(r.data.user);
+  }).catch(function(e){ gateFehler(e&&e.text ? e.text : "Hat nicht geklappt. Bitte gleich noch einmal."); });
+}
+function nachAnmeldung(user){
+  clearTimeout(WARTE_T);
+  sb.from("mitglieder").select("id,email,name,rolle,freigegeben").eq("id",user.id).maybeSingle().then(function(r){
+    if(r.error) throw r.error;
+    if(!r.data || !r.data.freigegeben){
+      ICH=null; gate("warten");
+      WARTE_T=setTimeout(function(){ nachAnmeldung(user); },20000);
+      return;
+    }
+    ICH=r.data; gate("laden");
+    return allesLaden().then(appZeigen);
+  }).catch(function(e){ console.error("Laden",e); gate("fehler"); });
+}
+function appZeigen(){
+  document.body.classList.remove("gesperrt"); $("anmeldung").hidden=true;
+  var av=document.querySelector("#einstBtn .avatar"); if(av) av.textContent=initialen(ICH.name||ICH.email);
+  S.letzteSicht=null; zeichnen();
+  clearInterval(ABRUF_T); ABRUF_T=setInterval(abrufen,30000);
 }
 function abmelden(){
-  try{ localStorage.removeItem("netboard_zugang"); }catch(err){}
-  S.sitzung=false; fensterZu(); $("a_err").hidden=true; anmeldungZeigen();
+  if((OFFEN||FEHLER) && !window.confirm("Noch nicht alles ist gespeichert. Trotzdem abmelden?")) return;
+  clearInterval(ABRUF_T); clearTimeout(SYNC_T); clearTimeout(WARTE_T);
+  ICH=null; D=leer(); SNAP={}; STAND={}; OFFEN=false; FEHLER=false;
+  fensterZu(); S.sicht="start";
+  sb.auth.signOut({ scope:"local" }).catch(function(){}).then(function(){ gate("anmelden"); });
+}
+
+/* ---------------- Mitglieder (nur Admin) ----------------
+   Freigeben und Sperren. Ob das erlaubt ist, entscheidet die Datenbank (Regel plus Schutz-Trigger). */
+function mitgliederZeichnen(){
+  var box=$("mitgliederBox"); if(!box) return;
+  sb.from("mitglieder").select("id,email,name,rolle,freigegeben,angelegt").order("angelegt").then(function(r){
+    if(r.error){ console.error("Mitglieder",r.error); box.innerHTML='<p class="err">Hat nicht geklappt.</p>'; return; }
+    box.innerHTML=(r.data||[]).map(function(m){
+      var ich=ICH && m.id===ICH.id;
+      return '<div class="box" style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px">'+
+        '<div style="flex:1;min-width:0"><b>'+esc(m.name||m.email)+'</b>'+(m.rolle==="admin"?' <span class="chip">Admin</span>':'')+
+        '<div class="hint" style="word-break:break-all">'+esc(m.email)+' · '+(m.freigegeben?'freigegeben':'wartet auf Freigabe')+'</div></div>'+
+        (ich?'':'<button class="btn klein'+(m.freigegeben?' ghost':' primary')+'" data-mfrei="'+esc(m.id)+'" data-wert="'+(m.freigegeben?'0':'1')+'">'+(m.freigegeben?'Sperren':'Freigeben')+'</button>')+
+      '</div>';
+    }).join("") || '<p class="hint">Noch niemand.</p>';
+    alle("[data-mfrei]",function(b){ b.onclick=function(){
+      b.disabled=true;
+      sb.from("mitglieder").update({ freigegeben:b.dataset.wert==="1" }).eq("id",b.dataset.mfrei).then(function(r2){
+        if(r2.error){ console.error("Freigabe",r2.error); toast("Hat nicht geklappt."); }
+        else toast(b.dataset.wert==="1"?"Freigegeben.":"Gesperrt.");
+        mitgliederZeichnen();
+      });
+    }; },box);
+  });
+}
+
+/* ---------------- Umzug (nur Admin) ----------------
+   Schreibt den alten Browser-Stand einmal in die Datenbank. Gleiche IDs werden überschrieben, also darf man
+   es wiederholen. Danach wird gezählt: jede ID aus dem Browser muss in der Datenbank stehen.
+   Der Browser-Stand bleibt liegen. */
+function browserBestand(){
+  var roh=LS.get(SCHLUESSEL); if(!roh) return null;
+  try{ return normal(JSON.parse(roh)); }catch(e){ return null; }
+}
+function zaehlenDb(t){
+  return sb.from(t).select("id",{ count:"exact", head:true }).then(function(r){ if(r.error) throw r.error; return r.count||0; });
+}
+function umzug(){
+  var lok=browserBestand(); if(!lok) return;
+  var plan=TABELLEN.map(function(t){
+    var ids={}, doppelt=0, zeilen=[];
+    lok[t].forEach(function(o){ if(!o||!o.id) return; if(ids[o.id]) doppelt++; ids[o.id]=o; });
+    Object.keys(ids).forEach(function(id){ zeilen.push({ id:id, daten:ids[id] }); });
+    return { t:t, browser:lok[t].length, doppelt:doppelt, zeilen:zeilen };
+  });
+  fenster("Bestand übernehmen",'<p class="hint" style="margin:0" id="uStand">Zähle vorher …</p><div id="uErgebnis"></div>','');
+  KETTE=KETTE.then(function(){
+    return Promise.all(TABELLEN.map(zaehlenDb)).then(function(vorher){
+      plan.forEach(function(p,i){ p.vorher=vorher[i]; });
+      $("uStand").textContent="Schreibe in die Datenbank …";
+      var schritte=[];
+      plan.forEach(function(p){
+        for(var i=0;i<p.zeilen.length;i+=400) (function(teil){
+          schritte.push(function(){ return sb.from(p.t).upsert(teil).then(function(r){ if(r.error) throw r.error; }); });
+        })(p.zeilen.slice(i,i+400));
+      });
+      schritte.push(function(){ return sb.from("einstellungen").upsert({ id:"gewichte", daten:lok.gewichte }).then(function(r){ if(r.error) throw r.error; }); });
+      return schritte.reduce(function(a,f){ return a.then(f); },Promise.resolve());
+    }).then(function(){
+      $("uStand").textContent="Zähle nachher …";
+      return Promise.all(plan.map(function(p){ return tabelleHolen(p.t,"id"); }));
+    }).then(function(l){
+      var allesDa=true;
+      plan.forEach(function(p,i){
+        var da={}; l[i].forEach(function(r){ da[r.id]=1; });
+        p.nachher=l[i].length;
+        p.fehlt=p.zeilen.filter(function(z){ return !da[z.id]; }).length;
+        if(p.fehlt) allesDa=false;
+      });
+      var namen={ events:"Events", personen:"Personen", einladungen:"Einladungen", verbindungen:"Verbindungen", clubs:"Clubs", firmen:"Firmen" };
+      console.log("Umzug",plan.map(function(p){ return { tabelle:p.t, browser:p.browser, doppelt:p.doppelt, vorher:p.vorher, nachher:p.nachher, fehlt:p.fehlt }; }));
+      $("uStand").textContent="Fertig. Der Bestand im Browser bleibt unverändert liegen.";
+      $("uErgebnis").innerHTML='<table class="mono" style="width:100%;border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums;margin-top:10px">'+
+        '<tr style="text-align:right"><th style="text-align:left">Tabelle</th><th>Browser</th><th>DB vorher</th><th>DB nachher</th><th>fehlt</th></tr>'+
+        plan.map(function(p){ return '<tr style="text-align:right;border-top:1px solid var(--line)"><td style="text-align:left;padding:6px 0">'+namen[p.t]+'</td><td>'+tausend(p.browser)+(p.doppelt?' ('+p.doppelt+' doppelt)':'')+'</td><td>'+tausend(p.vorher)+'</td><td>'+tausend(p.nachher)+'</td><td>'+p.fehlt+'</td></tr>'; }).join("")+
+        '</table>'+(allesDa?'<p class="okbox" style="margin-top:10px">Vollständig: jeder Eintrag aus dem Browser steht in der Datenbank.</p>'
+                          :'<p class="warnbox" style="margin-top:10px">Es fehlen Einträge. Bitte noch einmal übernehmen und dem Admin Bescheid geben.</p>');
+      return allesLaden().then(function(){ S.letzteSicht=null; zeichnen(); });
+    }).catch(function(e){
+      console.error("Umzug",e);
+      $("uStand").textContent="Hat nicht geklappt. Es ist nichts verloren, der Bestand im Browser bleibt liegen. Bitte noch einmal versuchen.";
+    });
+  });
 }
 
 /* ---------------- Start ---------------- */
@@ -2334,9 +2651,21 @@ function start(){
   $("einstBtn").onclick=einstellungen;
   $("neuBtn").onclick=function(){ eventFormular(null); };
   alle(".ul-knopf",function(b){ b.onclick=function(){ fensterZu(); S.sicht=b.dataset.sicht; if(S.sicht==="clubs") S.clubId=null; zeichnen(); }; });
-  if(angemeldet()){ document.body.classList.remove("gesperrt"); $("anmeldung").hidden=true; zeichnen(); }
-  else anmeldungZeigen();
+  document.addEventListener("visibilitychange",function(){ if(!document.hidden) abrufen(); });
+  window.addEventListener("focus",abrufen);
+  window.addEventListener("hashchange",function(){ if(/^#(einladung|passwort)=/.test(location.hash)) location.reload(); });
+  window.addEventListener("beforeunload",function(ev_){ if(OFFEN||FEHLER){ ev_.preventDefault(); ev_.returnValue=""; } });
   if("serviceWorker" in navigator && location.protocol==="https:") navigator.serviceWorker.register("sw.js").catch(function(){});
+  if(!sb){ gate("fehler"); return; }
+  sb.auth.onAuthStateChange(function(ereignis){
+    if(ereignis==="SIGNED_OUT" && ICH){ clearInterval(ABRUF_T); ICH=null; D=leer(); SNAP={}; fensterZu(); gate("anmelden"); }
+  });
+  if(LINK){ gate("passwort"); return; }
+  gate("laden");
+  sb.auth.getSession().then(function(r){
+    var s=r.data && r.data.session;
+    if(s) nachAnmeldung(s.user); else gate("anmelden");
+  }).catch(function(){ gate("anmelden"); });
 }
 start();
 })();
