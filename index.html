@@ -358,7 +358,7 @@ function herunterladen(name,inhalt,typ){
    nur geänderte Tabellen werden neu geladen und in die vorhandenen Objekte eingearbeitet.
    localStorage "netboard_daten" ist der alte Browser-Stand, nur noch für den einmaligen Umzug. */
 var SCHLUESSEL="netboard_daten";
-var SB_URL="SB_URL_EINTRAGEN", SB_KEY="SB_KEY_EINTRAGEN";
+var SB_URL="https://biqoicseuttypwbmbthd.supabase.co", SB_KEY="sb_publishable_qotZivx4fV4IkYYNlXvAPg_jJ3pDX_o";
 var sb=(window.supabase && window.supabase.createClient && SB_URL.indexOf("https://")===0)
   ? window.supabase.createClient(SB_URL,SB_KEY,{ auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:false } }) : null;
 var TABELLEN=["events","personen","einladungen","verbindungen","clubs","firmen"];
