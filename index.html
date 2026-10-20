@@ -1219,6 +1219,22 @@ function kontaktListe(p){
   return l.filter(function(k){ return k.datum; }).sort(function(a,b){ return a.datum<b.datum?1:-1; });
 }
 function letzterKontakt(p){ return kontaktListe(p)[0]||null; }
+function personenLoeschen(ids){
+  D.personen=D.personen.filter(function(x){ return ids.indexOf(x.id)<0; });
+  D.einladungen=D.einladungen.filter(function(x){ return ids.indexOf(x.personId)<0; });
+  D.verbindungen=D.verbindungen.filter(function(x){ return ids.indexOf(x.a)<0 && ids.indexOf(x.b)<0; });
+}
+/* Löschfrist (Datenschutz): seit 12 Monaten im Bestand, nie ausgewählt oder eingeladen, kein Kontakt eingetragen.
+   Die App schlägt nur vor, gelöscht wird erst nach Bestätigung durch den Admin. */
+var LOESCHFRIST_TAGE=365;
+function loeschVorschlaege(){
+  var grenze=new Date(Date.now()-LOESCHFRIST_TAGE*86400000).toISOString();
+  return D.personen.filter(function(p){
+    if(!p.angelegt || p.angelegt>grenze) return false;
+    if((p.kontakte||[]).length) return false;
+    return !D.einladungen.some(function(x){ return x.personId===p.id && x.status!=="vorgeschlagen" && x.status!=="aussortiert"; });
+  });
+}
 // Nur echte Beziehungen: wer schon einmal Kontakt hatte und wichtig ist. Sehr wichtig nach 60 Tagen, wichtig nach 120.
 function pflegeFaellig(){
   return D.personen.map(function(p){
@@ -1753,9 +1769,7 @@ function personFormular(alt,e){
       '<div class="reihe"><button class="btn danger" id="jaBtn">Löschen</button><button class="btn" id="neinBtn">Abbrechen</button></div></div>';
     $("neinBtn").onclick=function(){ personFormular(alt,e); };
     $("jaBtn").onclick=function(){
-      D.personen=D.personen.filter(function(x){ return x.id!==alt.id; });
-      D.einladungen=D.einladungen.filter(function(x){ return x.personId!==alt.id; });
-      D.verbindungen=D.verbindungen.filter(function(x){ return x.a!==alt.id && x.b!==alt.id; });
+      personenLoeschen([alt.id]);
       fensterZu(); sichern(); toast("Person gelöscht.");
     };
   };
@@ -2353,6 +2367,21 @@ function trefferCsv(l){
 }
 
 /* ---------------- Einstellungen ---------------- */
+function fristZeichnen(){
+  var box=$("fristBox"); if(!box) return; var l=loeschVorschlaege();
+  box.innerHTML='<div class="sec-label" style="margin-top:0">Löschfrist</div>'+
+    '<p class="hint" style="margin:0 0 8px">Wer seit 12 Monaten im Bestand ist, nie ausgewählt oder eingeladen wurde und keinen Kontakt hat, wird hier zum Löschen vorgeschlagen.</p>'+
+    (l.length?'<details class="gruppe" style="margin:0"><summary><span>'+plural(l.length,"Person","Personen")+' zum Löschen</span><span class="mono">'+l.length+'</span></summary>'+
+      '<div class="liste">'+l.map(function(p){ return '<div class="hint">'+esc(p.name)+(p.firma?' · '+esc(p.firma):'')+' · seit '+esc(deDatum(p.angelegt.slice(0,10)))+'</div>'; }).join("")+'</div></details>'+
+      '<div id="fristKnopf" style="margin-top:8px"><button class="btn ghost klein" id="fristBtn" style="color:var(--bad)">'+plural(l.length,"Person","Personen")+' löschen</button></div>'
+     :'<p class="okbox" style="margin:0">Niemand ist über der Frist.</p>');
+  if($("fristBtn")) $("fristBtn").onclick=function(){
+    $("fristKnopf").innerHTML='<div class="bestaetigen"><p style="margin:0">'+plural(l.length,"Person","Personen")+' endgültig löschen, mit allen Vorschlägen?</p>'+
+      '<div class="reihe"><button class="btn danger" id="fristJa">Löschen</button><button class="btn" id="fristNein">Abbrechen</button></div></div>';
+    $("fristNein").onclick=fristZeichnen;
+    $("fristJa").onclick=function(){ personenLoeschen(l.map(function(p){ return p.id; })); sichern(); fristZeichnen(); toast("Gelöscht."); };
+  };
+}
 function einstellungen(){
   var summe=TEILE.reduce(function(s,t){ return s+(Number(D.gewichte[t.k])||0); },0);
   fenster("Einstellungen",
@@ -2372,6 +2401,7 @@ function einstellungen(){
       (istAdmin()?'<button class="btn klein" id="impBtn">Sicherung einspielen</button><button class="btn klein" id="bspBtn">Beispiel laden</button>':'')+'</div>'+
       '<input type="file" id="impDatei" accept=".json,application/json" hidden>'+
       (istAdmin()?'<div id="allesBox" style="margin-top:10px"><button class="btn ghost klein" id="allesBtn" style="color:var(--bad)">Alle Daten löschen</button></div>':'')+'</div>'+
+    (istAdmin()?'<hr class="sep"><div id="fristBox"></div>':'')+
     (istAdmin()&&browserBestand()?'<hr class="sep"><div><div class="sec-label" style="margin-top:0">Bestand aus diesem Browser</div>'+
       '<p class="hint" style="margin:0 0 8px">Hier liegt noch der alte Stand aus der Zeit vor der Datenbank. Einmal übernehmen schreibt ihn in die Datenbank und zählt vorher und nachher. Der Browser-Stand bleibt liegen.</p>'+
       '<button class="btn klein" id="umzugBtn">Bestand aus diesem Browser übernehmen</button></div>':'')+
@@ -2394,7 +2424,7 @@ function einstellungen(){
   $("expBtn").onclick=function(){ herunterladen("netboard-sicherung-"+ymd(new Date())+".json",JSON.stringify(D,null,2)); };
   if($("impBtn")) $("impBtn").onclick=function(){ $("impDatei").click(); };
   if($("umzugBtn")) $("umzugBtn").onclick=umzug;
-  if(istAdmin()) mitgliederZeichnen();
+  if(istAdmin()){ mitgliederZeichnen(); fristZeichnen(); }
   $("p_los").onclick=passwortAendern;
   $("impDatei").onchange=function(){
     var f=this.files[0]; if(!f) return; var r=new FileReader();
